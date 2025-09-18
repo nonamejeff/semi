@@ -1,0 +1,7 @@
+# macOS Finder metadata
+.DS_Store
+
+# CMake build directories and generated artefacts
+build/
+juce_port/build/
+juce_port/SanctSoundJuceApp_artefacts/
