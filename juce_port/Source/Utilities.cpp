@@ -62,28 +62,49 @@ bool parseTimestamp(const juce::String& text, juce::Time& out)
     if (! hasDigits)
         return false;
 
-    auto tryIso = juce::Time::fromISO8601(trimmed);
-    if (trimmed.containsChar('-') && trimmed.containsChar(':'))
+    auto tryParseIso = [&](const juce::String& candidate)
     {
-        out = tryIso;
-        return true;
-    }
+        if (candidate.isEmpty())
+            return false;
 
-    if (! trimmed.containsAnyOf("zZ"))
-    {
-        auto isoWithZ = juce::Time::fromISO8601(trimmed + "Z");
-        if (isoWithZ != juce::Time())
+        auto parsed = juce::Time::fromISO8601(candidate);
+
+        if (parsed == juce::Time())
         {
-            out = isoWithZ;
-            return true;
+            auto digits = candidate.retainCharacters("0123456789");
+            if (! digits.startsWith("19700101"))
+                return false;
         }
+
+        out = parsed;
+        return true;
+    };
+
+    juce::StringArray candidates { trimmed };
+
+    if (trimmed.containsChar(' '))
+        candidates.add(trimmed.replaceCharacter(' ', 'T'));
+
+    if (trimmed.containsChar('/'))
+    {
+        auto withDashes = trimmed.replaceCharacter('/', '-');
+        candidates.add(withDashes);
+
+        if (withDashes.containsChar(' '))
+            candidates.add(withDashes.replaceCharacter(' ', 'T'));
     }
 
-    auto alt = juce::Time::fromString(trimmed, true);
-    if (alt != juce::Time())
+    for (auto candidate : candidates)
     {
-        out = alt;
-        return true;
+        if (tryParseIso(candidate))
+            return true;
+
+        if (! candidate.endsWithIgnoreCase("Z"))
+        {
+            auto withZone = candidate + "Z";
+            if (tryParseIso(withZone))
+                return true;
+        }
     }
 
     return false;
@@ -149,7 +170,9 @@ CsvTable readCsvFile(const juce::File& file)
     if (lines.isEmpty())
         return table;
 
-    table.header = splitCsvLine(lines.removeAndReturn(0));
+    auto headerLine = lines[0];
+    lines.remove(0);
+    table.header = splitCsvLine(headerLine);
     for (auto& line : lines)
         table.rows.add(splitCsvLine(line));
     return table;
