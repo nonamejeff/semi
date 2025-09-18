@@ -83,19 +83,19 @@ static void oboe_aaudio_error_thread_proc_common(AudioStreamAAudio *oboeStream,
 // Callback thread for raw pointers.
 static void oboe_aaudio_error_thread_proc(AudioStreamAAudio *oboeStream,
                                           Result error) {
-    LOGD("%s(,%d) - entering >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", __func__, error);
+    LOGD("%s(,%d) - entering >>> >>> >>>", __func__, error);
     oboe_aaudio_error_thread_proc_common(oboeStream, error);
-    LOGD("%s() - exiting <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<", __func__);
+    LOGD("%s() - exiting <<< <<< <<<", __func__);
 }
 
 // Callback thread for shared pointers.
 static void oboe_aaudio_error_thread_proc_shared(std::shared_ptr<AudioStream> sharedStream,
                                           Result error) {
-    LOGD("%s(,%d) - entering >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>", __func__, error);
+    LOGD("%s(,%d) - entering >>> >>> >>>", __func__, error);
     // Hold the shared pointer while we use the raw pointer.
     AudioStreamAAudio *oboeStream = reinterpret_cast<AudioStreamAAudio*>(sharedStream.get());
     oboe_aaudio_error_thread_proc_common(oboeStream, error);
-    LOGD("%s() - exiting <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<", __func__);
+    LOGD("%s() - exiting <<< <<< <<<", __func__);
 }
 
 namespace oboe {
