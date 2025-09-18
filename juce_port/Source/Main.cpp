@@ -1,6 +1,44 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include "MainComponent.h"
 
+namespace
+{
+juce::String chooseUIFont()
+{
+    juce::StringArray preferred;
+
+#if JUCE_MAC
+    preferred.add("SF Pro Text");
+    preferred.add("Helvetica Neue");
+    preferred.add("Avenir Next");
+    preferred.add("Helvetica");
+    preferred.add("Arial");
+#elif JUCE_WINDOWS
+    preferred.add("Segoe UI");
+    preferred.add("Calibri");
+    preferred.add("Arial");
+    preferred.add("Helvetica Neue");
+#else
+    preferred.add("Noto Sans");
+    preferred.add("DejaVu Sans");
+    preferred.add("Liberation Sans");
+    preferred.add("Helvetica Neue");
+    preferred.add("Arial");
+#endif
+
+    auto available = juce::Font::findAllTypefaceNames();
+
+    for (auto& name : preferred)
+        if (available.contains(name))
+            return name;
+
+    if (! available.isEmpty())
+        return available[0];
+
+    return juce::Font::getDefaultSansSerifFontName();
+}
+} // namespace
+
 // NOTE: Your MainComponent is inside namespace `sanctsound`.
 // Either qualify it here, or `using namespace sanctsound;`.
 // We’ll fully qualify to avoid namespace leaks.
@@ -38,6 +76,8 @@ public:
 
     void initialise(const juce::String&) override
     {
+        auto uiFont = chooseUIFont();
+        juce::LookAndFeel::getDefaultLookAndFeel().setDefaultSansSerifTypefaceName(uiFont);
         mainWindow.reset(new MainWindow());
     }
 

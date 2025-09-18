@@ -47,8 +47,43 @@ juce::String humaniseError(const juce::String& context, const CommandResult& res
     juce::String msg = context;
     if (result.exitCode != 0)
         msg << " failed with exit code " << result.exitCode << ".";
-    if (result.output.isNotEmpty())
-        msg << "\n" << result.output;
+
+    auto trimmedOutput = result.output.trim();
+    if (trimmedOutput.isNotEmpty())
+        msg << "\n" << trimmedOutput;
+
+    juce::StringArray hints;
+    auto lowerContext = context.toLowerCase();
+    auto lowerOutput  = trimmedOutput.toLowerCase();
+
+    if (lowerContext.contains("gsutil"))
+    {
+        if (lowerOutput.contains("command not found") || result.exitCode == -1)
+            hints.add("Check that the Google Cloud SDK is installed and that `gsutil` is on your PATH.");
+
+        if (trimmedOutput.isEmpty()
+            || lowerOutput.contains("not currently authenticated")
+            || lowerOutput.contains("anonymous caller")
+            || lowerOutput.contains("login"))
+        {
+            hints.add("Authenticate with Google Cloud before running the app (for example, run `gcloud auth login` or set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable).");
+        }
+
+        if (lowerOutput.contains("no urls matched"))
+            hints.add("No matching objects were found. Adjust the site or tag filter and try again.");
+    }
+    else if (lowerContext.contains("ffmpeg"))
+    {
+        hints.add("Ensure `ffmpeg` is installed and available on your PATH.");
+    }
+    else if (lowerContext.contains("ffprobe"))
+    {
+        hints.add("Ensure `ffprobe` (part of ffmpeg) is installed and on your PATH.");
+    }
+
+    if (! hints.isEmpty())
+        msg << "\n\n" << hints.joinIntoString(" ");
+
     return msg;
 }
 
