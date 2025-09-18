@@ -9,6 +9,8 @@ juce::String chooseUIFont()
 
 #if JUCE_MAC
     preferred.add("SF Pro Text");
+    preferred.add(".SF NS Text");
+    preferred.add(".AppleSystemUIFont");
     preferred.add("Helvetica Neue");
     preferred.add("Avenir Next");
     preferred.add("Helvetica");
@@ -26,16 +28,20 @@ juce::String chooseUIFont()
     preferred.add("Arial");
 #endif
 
-    auto available = juce::Font::findAllTypefaceNames();
+    auto available   = juce::Font::findAllTypefaceNames();
+    auto defaultName = juce::Font::getDefaultSansSerifFontName();
 
     for (auto& name : preferred)
         if (available.contains(name))
             return name;
 
+    if (available.contains(defaultName))
+        return defaultName;
+
     if (! available.isEmpty())
         return available[0];
 
-    return juce::Font::getDefaultSansSerifFontName();
+    return defaultName;
 }
 } // namespace
 
