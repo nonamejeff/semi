@@ -97,6 +97,29 @@ bool timeLessThanOrEqual(const juce::Time& a, const juce::Time& b)
     return a.toMilliseconds() <= b.toMilliseconds();
 }
 
+bool containsNoMatchesMessage(const juce::String& text)
+{
+    if (text.isEmpty())
+        return false;
+
+    auto lower = text.toLowerCase();
+    return lower.contains("no urls matched")
+        || lower.contains("matched no objects")
+        || lower.contains("0 matched your query");
+}
+
+bool isNoMatchesError(const CommandResult& result)
+{
+    if (containsNoMatchesMessage(result.output.trim()))
+        return true;
+
+    for (auto& line : result.lines)
+        if (containsNoMatchesMessage(line.trim()))
+            return true;
+
+    return false;
+}
+
 void removeDuplicateTimesInPlace(juce::Array<juce::Time>& values)
 {
     juce::Array<juce::Time> unique;
@@ -769,7 +792,16 @@ std::vector<ProductGroup> SanctSoundClient::listProductGroups(const juce::String
         log("[ls] " + glob);
         auto result = runCommand({ "gsutil", "ls", "-r", glob });
         if (result.exitCode != 0)
+        {
+            if (isNoMatchesError(result))
+            {
+                if (log)
+                    log("  ↳ no matches");
+                continue;
+            }
+
             throw std::runtime_error(humaniseError("gsutil ls", result).toStdString());
+        }
 
         juce::StringArray lines;
         lines.addLines(result.output);
