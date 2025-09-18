@@ -4,54 +4,17 @@ set(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)
 
 # The set of languages for which implicit dependencies are needed:
 set(CMAKE_DEPENDS_LANGUAGES
-  "C"
-  )
-# The set of files for implicit dependencies of each language:
-set(CMAKE_DEPENDS_CHECK_C
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c" "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/build/CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o"
-  )
-
-# Preprocessor definitions for this target.
-set(CMAKE_TARGET_DEFINITIONS_C
-  "JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1"
-  "JUCE_MODAL_LOOPS_PERMITTED=1"
-  "JUCE_MODULE_AVAILABLE_juce_audio_basics=1"
-  "JUCE_MODULE_AVAILABLE_juce_audio_devices=1"
-  "JUCE_MODULE_AVAILABLE_juce_audio_formats=1"
-  "JUCE_MODULE_AVAILABLE_juce_audio_processors=1"
-  "JUCE_MODULE_AVAILABLE_juce_audio_utils=1"
-  "JUCE_MODULE_AVAILABLE_juce_core=1"
-  "JUCE_MODULE_AVAILABLE_juce_data_structures=1"
-  "JUCE_MODULE_AVAILABLE_juce_dsp=1"
-  "JUCE_MODULE_AVAILABLE_juce_events=1"
-  "JUCE_MODULE_AVAILABLE_juce_graphics=1"
-  "JUCE_MODULE_AVAILABLE_juce_gui_basics=1"
-  "JUCE_MODULE_AVAILABLE_juce_gui_extra=1"
-  "JUCE_STANDALONE_APPLICATION=1"
-  "JUCE_USE_CURL=0"
-  "JUCE_WEB_BROWSER=0"
-  "NDEBUG=1"
-  "_NDEBUG=1"
-  )
-
-# The include file search paths:
-set(CMAKE_C_TARGET_INCLUDE_PATH
-  "SanctSoundJuceApp_artefacts/JuceLibraryCode"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/Source"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/VST3_SDK"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/LV2_SDK"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/LV2_SDK/lv2"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/LV2_SDK/serd"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/LV2_SDK/sord"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/LV2_SDK/sord/src"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/LV2_SDK/sratom"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/LV2_SDK/lilv"
-  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_processors/format_types/LV2_SDK/lilv/src"
   )
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
+  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c" "CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_graphics/juce_graphics_Sheenbidi.c.o.d"
+  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/Source/Main.cpp" "CMakeFiles/SanctSoundJuceApp.dir/Source/Main.cpp.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/Source/Main.cpp.o.d"
+  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/Source/MainComponent.cpp" "CMakeFiles/SanctSoundJuceApp.dir/Source/MainComponent.cpp.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/Source/MainComponent.cpp.o.d"
+  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/Source/MetadataView.cpp" "CMakeFiles/SanctSoundJuceApp.dir/Source/MetadataView.cpp.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/Source/MetadataView.cpp.o.d"
+  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/Source/PreviewModels.cpp" "CMakeFiles/SanctSoundJuceApp.dir/Source/PreviewModels.cpp.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/Source/PreviewModels.cpp.o.d"
+  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/Source/SanctSoundClient.cpp" "CMakeFiles/SanctSoundJuceApp.dir/Source/SanctSoundClient.cpp.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/Source/SanctSoundClient.cpp.o.d"
+  "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/Source/Utilities.cpp" "CMakeFiles/SanctSoundJuceApp.dir/Source/Utilities.cpp.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/Source/Utilities.cpp.o.d"
   "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_basics/juce_audio_basics.mm" "CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_audio_basics/juce_audio_basics.mm.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_audio_basics/juce_audio_basics.mm.o.d"
   "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_devices/juce_audio_devices.mm" "CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_audio_devices/juce_audio_devices.mm.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_audio_devices/juce_audio_devices.mm.o.d"
   "/Users/kailashpermaul/Documents/GitHub/semi/juce_port/external/JUCE/modules/juce_audio_formats/juce_audio_formats.mm" "CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_audio_formats/juce_audio_formats.mm.o" "gcc" "CMakeFiles/SanctSoundJuceApp.dir/external/JUCE/modules/juce_audio_formats/juce_audio_formats.mm.o.d"

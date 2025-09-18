@@ -168,12 +168,12 @@ external/JUCE/modules/clean:
 CMakeFiles/SanctSoundJuceApp.dir/all:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/kailashpermaul/Documents/GitHub/semi/juce_port/build/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18 "Built target SanctSoundJuceApp"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/kailashpermaul/Documents/GitHub/semi/juce_port/build/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26 "Built target SanctSoundJuceApp"
 .PHONY : CMakeFiles/SanctSoundJuceApp.dir/all
 
 # Build rule for subdir invocation for target.
 CMakeFiles/SanctSoundJuceApp.dir/rule: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /Users/kailashpermaul/Documents/GitHub/semi/juce_port/build/CMakeFiles 18
+	$(CMAKE_COMMAND) -E cmake_progress_start /Users/kailashpermaul/Documents/GitHub/semi/juce_port/build/CMakeFiles 26
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 CMakeFiles/SanctSoundJuceApp.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start /Users/kailashpermaul/Documents/GitHub/semi/juce_port/build/CMakeFiles 0
 .PHONY : CMakeFiles/SanctSoundJuceApp.dir/rule
@@ -185,7 +185,7 @@ SanctSoundJuceApp: CMakeFiles/SanctSoundJuceApp.dir/rule
 # codegen rule for target.
 CMakeFiles/SanctSoundJuceApp.dir/codegen:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/codegen
-	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/kailashpermaul/Documents/GitHub/semi/juce_port/build/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18 "Finished codegen for target SanctSoundJuceApp"
+	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/Users/kailashpermaul/Documents/GitHub/semi/juce_port/build/CMakeFiles --progress-num=1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26 "Finished codegen for target SanctSoundJuceApp"
 .PHONY : CMakeFiles/SanctSoundJuceApp.dir/codegen
 
 # clean rule for target.

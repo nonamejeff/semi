@@ -175,6 +175,150 @@ SanctSoundJuceApp/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/build
 .PHONY : SanctSoundJuceApp/fast
 
+Source/Main.o: Source/Main.cpp.o
+.PHONY : Source/Main.o
+
+# target to build an object file
+Source/Main.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/Main.cpp.o
+.PHONY : Source/Main.cpp.o
+
+Source/Main.i: Source/Main.cpp.i
+.PHONY : Source/Main.i
+
+# target to preprocess a source file
+Source/Main.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/Main.cpp.i
+.PHONY : Source/Main.cpp.i
+
+Source/Main.s: Source/Main.cpp.s
+.PHONY : Source/Main.s
+
+# target to generate assembly for a file
+Source/Main.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/Main.cpp.s
+.PHONY : Source/Main.cpp.s
+
+Source/MainComponent.o: Source/MainComponent.cpp.o
+.PHONY : Source/MainComponent.o
+
+# target to build an object file
+Source/MainComponent.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/MainComponent.cpp.o
+.PHONY : Source/MainComponent.cpp.o
+
+Source/MainComponent.i: Source/MainComponent.cpp.i
+.PHONY : Source/MainComponent.i
+
+# target to preprocess a source file
+Source/MainComponent.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/MainComponent.cpp.i
+.PHONY : Source/MainComponent.cpp.i
+
+Source/MainComponent.s: Source/MainComponent.cpp.s
+.PHONY : Source/MainComponent.s
+
+# target to generate assembly for a file
+Source/MainComponent.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/MainComponent.cpp.s
+.PHONY : Source/MainComponent.cpp.s
+
+Source/MetadataView.o: Source/MetadataView.cpp.o
+.PHONY : Source/MetadataView.o
+
+# target to build an object file
+Source/MetadataView.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/MetadataView.cpp.o
+.PHONY : Source/MetadataView.cpp.o
+
+Source/MetadataView.i: Source/MetadataView.cpp.i
+.PHONY : Source/MetadataView.i
+
+# target to preprocess a source file
+Source/MetadataView.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/MetadataView.cpp.i
+.PHONY : Source/MetadataView.cpp.i
+
+Source/MetadataView.s: Source/MetadataView.cpp.s
+.PHONY : Source/MetadataView.s
+
+# target to generate assembly for a file
+Source/MetadataView.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/MetadataView.cpp.s
+.PHONY : Source/MetadataView.cpp.s
+
+Source/PreviewModels.o: Source/PreviewModels.cpp.o
+.PHONY : Source/PreviewModels.o
+
+# target to build an object file
+Source/PreviewModels.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/PreviewModels.cpp.o
+.PHONY : Source/PreviewModels.cpp.o
+
+Source/PreviewModels.i: Source/PreviewModels.cpp.i
+.PHONY : Source/PreviewModels.i
+
+# target to preprocess a source file
+Source/PreviewModels.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/PreviewModels.cpp.i
+.PHONY : Source/PreviewModels.cpp.i
+
+Source/PreviewModels.s: Source/PreviewModels.cpp.s
+.PHONY : Source/PreviewModels.s
+
+# target to generate assembly for a file
+Source/PreviewModels.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/PreviewModels.cpp.s
+.PHONY : Source/PreviewModels.cpp.s
+
+Source/SanctSoundClient.o: Source/SanctSoundClient.cpp.o
+.PHONY : Source/SanctSoundClient.o
+
+# target to build an object file
+Source/SanctSoundClient.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/SanctSoundClient.cpp.o
+.PHONY : Source/SanctSoundClient.cpp.o
+
+Source/SanctSoundClient.i: Source/SanctSoundClient.cpp.i
+.PHONY : Source/SanctSoundClient.i
+
+# target to preprocess a source file
+Source/SanctSoundClient.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/SanctSoundClient.cpp.i
+.PHONY : Source/SanctSoundClient.cpp.i
+
+Source/SanctSoundClient.s: Source/SanctSoundClient.cpp.s
+.PHONY : Source/SanctSoundClient.s
+
+# target to generate assembly for a file
+Source/SanctSoundClient.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/SanctSoundClient.cpp.s
+.PHONY : Source/SanctSoundClient.cpp.s
+
+Source/Utilities.o: Source/Utilities.cpp.o
+.PHONY : Source/Utilities.o
+
+# target to build an object file
+Source/Utilities.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/Utilities.cpp.o
+.PHONY : Source/Utilities.cpp.o
+
+Source/Utilities.i: Source/Utilities.cpp.i
+.PHONY : Source/Utilities.i
+
+# target to preprocess a source file
+Source/Utilities.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/Utilities.cpp.i
+.PHONY : Source/Utilities.cpp.i
+
+Source/Utilities.s: Source/Utilities.cpp.s
+.PHONY : Source/Utilities.s
+
+# target to generate assembly for a file
+Source/Utilities.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/SanctSoundJuceApp.dir/build.make CMakeFiles/SanctSoundJuceApp.dir/Source/Utilities.cpp.s
+.PHONY : Source/Utilities.cpp.s
+
 external/JUCE/modules/juce_audio_basics/juce_audio_basics.o: external/JUCE/modules/juce_audio_basics/juce_audio_basics.mm.o
 .PHONY : external/JUCE/modules/juce_audio_basics/juce_audio_basics.o
 
@@ -596,6 +740,24 @@ help:
 	@echo "... list_install_components"
 	@echo "... rebuild_cache"
 	@echo "... SanctSoundJuceApp"
+	@echo "... Source/Main.o"
+	@echo "... Source/Main.i"
+	@echo "... Source/Main.s"
+	@echo "... Source/MainComponent.o"
+	@echo "... Source/MainComponent.i"
+	@echo "... Source/MainComponent.s"
+	@echo "... Source/MetadataView.o"
+	@echo "... Source/MetadataView.i"
+	@echo "... Source/MetadataView.s"
+	@echo "... Source/PreviewModels.o"
+	@echo "... Source/PreviewModels.i"
+	@echo "... Source/PreviewModels.s"
+	@echo "... Source/SanctSoundClient.o"
+	@echo "... Source/SanctSoundClient.i"
+	@echo "... Source/SanctSoundClient.s"
+	@echo "... Source/Utilities.o"
+	@echo "... Source/Utilities.i"
+	@echo "... Source/Utilities.s"
 	@echo "... external/JUCE/modules/juce_audio_basics/juce_audio_basics.o"
 	@echo "... external/JUCE/modules/juce_audio_basics/juce_audio_basics.i"
 	@echo "... external/JUCE/modules/juce_audio_basics/juce_audio_basics.s"
