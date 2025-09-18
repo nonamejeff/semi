@@ -97,6 +97,31 @@ bool timeLessThanOrEqual(const juce::Time& a, const juce::Time& b)
     return a.toMilliseconds() <= b.toMilliseconds();
 }
 
+void removeDuplicateTimesInPlace(juce::Array<juce::Time>& values)
+{
+    juce::Array<juce::Time> unique;
+    unique.ensureStorageAllocated(values.size());
+
+    for (auto& value : values)
+    {
+        bool seen = false;
+
+        for (auto& existing : unique)
+        {
+            if (existing == value)
+            {
+                seen = true;
+                break;
+            }
+        }
+
+        if (! seen)
+            unique.add(value);
+    }
+
+    values.swapWith(unique);
+}
+
 juce::Optional<juce::Time> parseAudioStartFromName(const juce::String& name)
 {
     auto trimmed = name.trim();
@@ -359,7 +384,7 @@ juce::Array<PreviewWindow> parseEventsFromCsv(const juce::File& file)
 
     for (int rowIdx = 0; rowIdx < table.rows.size(); ++rowIdx)
     {
-        auto& row = table.rows[rowIdx];
+        auto& row = table.rows.getReference(rowIdx);
         if (dtCol >= row.size())
             continue;
         juce::Time start;
@@ -505,7 +530,7 @@ juce::Array<AudioReference> listAudioFilesInFolder(const juce::String& site,
     if (leftCandidate.hasValue())
     {
         if (tmin.toMilliseconds() == 0 || (tmin - leftCandidate->start) <= juce::RelativeTime::hours(6))
-            files.add(leftCandidate.get());
+            files.add(*leftCandidate);
     }
 
     std::sort(files.begin(), files.end(), [](const AudioReference& a, const AudioReference& b)
@@ -679,8 +704,8 @@ juce::String ffmpegConcat(const juce::File& wav1, const juce::File& wav2, const 
         juce::FileOutputStream out(temp);
         if (! out.openedOk())
             return "Failed to create concat list";
-        out.writeText("file '" + wav1.getFullPathName() + "'\n", false, false);
-        out.writeText("file '" + wav2.getFullPathName() + "'\n", false, false);
+        out.writeText("file '" + wav1.getFullPathName() + "'\n", false, false, nullptr);
+        out.writeText("file '" + wav2.getFullPathName() + "'\n", false, false, nullptr);
     }
     auto result = runCommand({ "ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", temp.getFullPathName(), "-c", "copy", outFile.getFullPathName() });
     temp.deleteFile();
@@ -693,8 +718,6 @@ juce::String stampForFilename(const juce::Time& t)
 {
     return t.formatted("%Y%m%dT%H%M%S");
 }
-
-} // namespace
 
 } // namespace
 
@@ -869,7 +892,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         juce::Array<juce::Time> hours;
         for (auto& csv : localCsvs)
             hours.addArray(parsePresenceHoursFromCsv(csv));
-        hours.removeDuplicates();
+        removeDuplicateTimesInPlace(hours);
         std::sort(hours.begin(), hours.end(), [](auto& a, auto& b) { return timeLessThan(a, b); });
 
         auto runs = groupConsecutive(hours, juce::RelativeTime::hours(1));
@@ -907,7 +930,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         juce::Array<juce::Time> days;
         for (auto& csv : localCsvs)
             days.addArray(parsePresenceDaysFromCsv(csv));
-        days.removeDuplicates();
+        removeDuplicateTimesInPlace(days);
         std::sort(days.begin(), days.end(), [](auto& a, auto& b) { return timeLessThan(a, b); });
 
         windows = juce::Array<PreviewWindow>();
@@ -1173,7 +1196,7 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
             juce::StringArray escaped;
             for (auto& f : fields)
                 escaped.add("\"" + f.replace("\"", "\"\"") + "\"");
-            stream.writeText(escaped.joinIntoString(",") + "\n", false, false);
+            stream.writeText(escaped.joinIntoString(",") + "\n", false, false, nullptr);
         };
 
         {
