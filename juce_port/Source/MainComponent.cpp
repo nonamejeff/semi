@@ -64,13 +64,27 @@ public:
 
     void setRow(int newIndex) { rowIndex = newIndex; }
 
-    void update(const GroupEntry& entry)
+    void update(const GroupEntry* entry)
     {
         juce::ScopedValueSetter<bool> svs(guard, true);
-        toggle.setToggleState(entry.selected, juce::dontSendNotification);
-        nameLabel.setText(entry.group.name, juce::dontSendNotification);
-        metaLabel.setText("[" + entry.mode.toLowerCase() + "]  [" + formatExtCounts(entry.group) + "]",
-                          juce::dontSendNotification);
+
+        const auto hasEntry = (entry != nullptr);
+        toggle.setEnabled(hasEntry);
+        infoButton.setEnabled(hasEntry);
+
+        if (hasEntry)
+        {
+            toggle.setToggleState(entry->selected, juce::dontSendNotification);
+            nameLabel.setText(entry->group.name, juce::dontSendNotification);
+            metaLabel.setText("[" + entry->mode.toLowerCase() + "]  [" + formatExtCounts(entry->group) + "]",
+                              juce::dontSendNotification);
+        }
+        else
+        {
+            toggle.setToggleState(false, juce::dontSendNotification);
+            nameLabel.setText({}, juce::dontSendNotification);
+            metaLabel.setText({}, juce::dontSendNotification);
+        }
     }
 
     void resized() override
@@ -86,7 +100,7 @@ public:
 private:
     void buttonClicked(juce::Button* b) override
     {
-        if (guard) return;
+        if (guard || rowIndex < 0) return;
         if (b == &toggle)         owner.onGroupToggled(rowIndex, toggle.getToggleState());
         else if (b == &infoButton) owner.onGroupInfo(rowIndex);
     }
@@ -124,17 +138,31 @@ public:
 
     void setRow(int idx) { rowIndex = idx; }
 
-    void update(const FileEntry& entry)
+    void update(const FileEntry* entry)
     {
         juce::ScopedValueSetter<bool> svs(guard, true);
-        toggle.setToggleState(entry.selected, juce::dontSendNotification);
-        nameLabel.setText(entry.file.name, juce::dontSendNotification);
 
-        juce::String times;
-        times << entry.file.start.toISO8601(true) << " → " << entry.file.end.toISO8601(true);
-        timeLabel.setText(times, juce::dontSendNotification);
+        const auto hasEntry = (entry != nullptr);
+        toggle.setEnabled(hasEntry);
 
-        urlLabel.setText(entry.file.url, juce::dontSendNotification);
+        if (hasEntry)
+        {
+            toggle.setToggleState(entry->selected, juce::dontSendNotification);
+            nameLabel.setText(entry->file.name, juce::dontSendNotification);
+
+            juce::String times;
+            times << entry->file.start.toISO8601(true) << " → " << entry->file.end.toISO8601(true);
+            timeLabel.setText(times, juce::dontSendNotification);
+
+            urlLabel.setText(entry->file.url, juce::dontSendNotification);
+        }
+        else
+        {
+            toggle.setToggleState(false, juce::dontSendNotification);
+            nameLabel.setText({}, juce::dontSendNotification);
+            timeLabel.setText({}, juce::dontSendNotification);
+            urlLabel.setText({}, juce::dontSendNotification);
+        }
     }
 
     void resized() override
@@ -149,7 +177,7 @@ public:
 private:
     void buttonClicked(juce::Button* b) override
     {
-        if (guard) return;
+        if (guard || rowIndex < 0) return;
         if (b == &toggle) owner.onFileToggled(rowIndex, toggle.getToggleState());
     }
 
@@ -174,8 +202,16 @@ public:
     {
         auto* row = dynamic_cast<GroupRow*>(existing);
         if (row == nullptr) row = new GroupRow(owner);
-        row->setRow(rowNumber);
-        row->update(owner.groups.at((size_t)rowNumber));
+        if ((size_t)rowNumber < owner.groups.size())
+        {
+            row->setRow(rowNumber);
+            row->update(&owner.groups[(size_t)rowNumber]);
+        }
+        else
+        {
+            row->setRow(-1);
+            row->update(nullptr);
+        }
         return row;
     }
 
@@ -196,8 +232,16 @@ public:
     {
         auto* row = dynamic_cast<FileRow*>(existing);
         if (row == nullptr) row = new FileRow(owner);
-        row->setRow(rowNumber);
-        row->update(owner.files.at((size_t)rowNumber));
+        if ((size_t)rowNumber < owner.files.size())
+        {
+            row->setRow(rowNumber);
+            row->update(&owner.files[(size_t)rowNumber]);
+        }
+        else
+        {
+            row->setRow(-1);
+            row->update(nullptr);
+        }
         return row;
     }
 
