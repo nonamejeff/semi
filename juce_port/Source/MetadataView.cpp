@@ -93,7 +93,7 @@ MetadataView::MetadataView()
     addAndMakeVisible(titleLabel);
     titleLabel.setText("Metadata", juce::dontSendNotification);
     titleLabel.setJustificationType(juce::Justification::left);
-    titleLabel.setFont(juce::Font(16.0f, juce::Font::bold));
+    titleLabel.setFont(juce::FontOptions(16.0f, juce::Font::bold));
 
     summaryTab = std::make_unique<SummaryPanel>(messageLabel,
                                                 siteValue,
@@ -110,9 +110,14 @@ MetadataView::MetadataView()
 
     rawEditor.setMultiLine(true, true);
     rawEditor.setReadOnly(true);
+<<<<<<< HEAD
     // JUCE 8: this now takes a single bool
     rawEditor.setScrollbarsShown(true);
     rawEditor.setFont(juce::Font(13.0f));
+=======
+    rawEditor.setScrollbarsShown(true, true);
+    rawEditor.setFont(juce::FontOptions(13.0f));
+>>>>>>> a9c259d77e8c7ba6df88ae6331607d1075895a90
     rawEditor.setTextToShowWhenEmpty("Select a set to view metadata.", juce::Colours::grey);
     tabs.addTab("Raw JSON", juce::Colours::transparentBlack, &rawEditor, false);
 
@@ -134,7 +139,7 @@ void MetadataView::initialiseSummaryCards()
     auto configureValue = [](juce::Label& label)
     {
         label.setJustificationType(juce::Justification::left);
-        label.setFont(juce::Font(14.0f));
+        label.setFont(juce::FontOptions(14.0f));
         label.setColour(juce::Label::textColourId, juce::Colours::black);
         label.setBorderSize(juce::BorderSize<int>(2));
         label.setMinimumHorizontalScale(0.6f);
@@ -146,7 +151,7 @@ void MetadataView::initialiseSummaryCards()
         label->setText(title, juce::dontSendNotification);
         label->setJustificationType(juce::Justification::left);
         label->setColour(juce::Label::textColourId, juce::Colours::darkgrey);
-        label->setFont(juce::Font(12.5f, juce::Font::bold));
+        label->setFont(juce::FontOptions(12.5f, juce::Font::bold));
         summaryTab->addAndMakeVisible(label.get());
         titleLabels.push_back(std::move(label));
 
