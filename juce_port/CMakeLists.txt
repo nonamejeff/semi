@@ -4,7 +4,7 @@ project(SanctSoundJuce VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# JUCE is included in your repo at external/JUCE/
+# JUCE is vendored in your repo at external/JUCE/
 set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(JUCE_BUILD_EXTRAS   OFF CACHE BOOL "" FORCE)
 add_subdirectory(external/JUCE)
@@ -24,7 +24,7 @@ target_sources(SanctSoundJuceApp PRIVATE
     Source/SanctSoundClient.cpp
     Source/Utilities.cpp
 
-    # headers optional, fine to list:
+    # headers optional to list, fine either way:
     Source/MainComponent.h
     Source/MetadataView.h
     Source/PreviewModels.h

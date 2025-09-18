@@ -1,19 +1,24 @@
 #include "MainComponent.h"
 
+// Ensure complete types are visible in this TU
+#include "MetadataView.h"
+#include "PreviewModels.h"
+#include "SanctSoundClient.h"
+
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <utility>
+#include <thread>
 
 namespace sanctsound
 {
+
 namespace
 {
 juce::String determineMode(const juce::String& name)
 {
     auto lower = name.toLowerCase();
-    if (lower.endsWith("_1h"))
-        return "HOUR";
-    if (lower.endsWith("_1d"))
-        return "DAY";
+    if (lower.endsWith("_1h")) return "HOUR";
+    if (lower.endsWith("_1d")) return "DAY";
     return "EVENT";
 }
 
@@ -24,38 +29,48 @@ juce::String formatExtCounts(const ProductGroup& group)
         parts.add(kv.first + ":" + juce::String(kv.second));
     return parts.joinIntoString(", ");
 }
+
+// Convert juce::StringArray → juce::Array<juce::String>
+static juce::Array<juce::String> toArray(const juce::StringArray& sa)
+{
+    juce::Array<juce::String> a;
+    for (auto& s : sa) a.add(s);
+    return a;
 }
+} // namespace
+
+// ======================= GroupRow =======================
 
 class MainComponent::GroupRow : public juce::Component,
                                 private juce::Button::Listener
 {
 public:
-    GroupRow(MainComponent& ownerRef)
-        : owner(ownerRef)
+    explicit GroupRow(MainComponent& ownerRef) : owner(ownerRef)
     {
         addAndMakeVisible(toggle);
         toggle.addListener(this);
+
         addAndMakeVisible(infoButton);
         infoButton.setButtonText("Info");
         infoButton.addListener(this);
+
         addAndMakeVisible(nameLabel);
         nameLabel.setJustificationType(juce::Justification::left);
+
         addAndMakeVisible(metaLabel);
         metaLabel.setJustificationType(juce::Justification::left);
         metaLabel.setColour(juce::Label::textColourId, juce::Colours::dimgrey);
     }
 
-    void setRow(int newIndex)
-    {
-        rowIndex = newIndex;
-    }
+    void setRow(int newIndex) { rowIndex = newIndex; }
 
     void update(const GroupEntry& entry)
     {
         juce::ScopedValueSetter<bool> svs(guard, true);
         toggle.setToggleState(entry.selected, juce::dontSendNotification);
         nameLabel.setText(entry.group.name, juce::dontSendNotification);
-        metaLabel.setText("[" + entry.mode.toLowerCase() + "]  [" + formatExtCounts(entry.group) + "]", juce::dontSendNotification);
+        metaLabel.setText("[" + entry.mode.toLowerCase() + "]  [" + formatExtCounts(entry.group) + "]",
+                          juce::dontSendNotification);
     }
 
     void resized() override
@@ -71,36 +86,37 @@ public:
 private:
     void buttonClicked(juce::Button* b) override
     {
-        if (guard)
-            return;
-        if (b == &toggle)
-            owner.onGroupToggled(rowIndex, toggle.getToggleState());
-        else if (b == &infoButton)
-            owner.onGroupInfo(rowIndex);
+        if (guard) return;
+        if (b == &toggle)         owner.onGroupToggled(rowIndex, toggle.getToggleState());
+        else if (b == &infoButton) owner.onGroupInfo(rowIndex);
     }
 
-    MainComponent& owner;
-    int rowIndex = 0;
+    MainComponent&   owner;
+    int              rowIndex = 0;
     juce::ToggleButton toggle;
-    juce::TextButton infoButton;
-    juce::Label nameLabel;
-    juce::Label metaLabel;
-    bool guard = false;
+    juce::TextButton   infoButton;
+    juce::Label        nameLabel;
+    juce::Label        metaLabel;
+    bool               guard = false;
 };
+
+// ======================= FileRow =======================
 
 class MainComponent::FileRow : public juce::Component,
                                private juce::Button::Listener
 {
 public:
-    FileRow(MainComponent& ownerRef)
-        : owner(ownerRef)
+    explicit FileRow(MainComponent& ownerRef) : owner(ownerRef)
     {
         addAndMakeVisible(toggle);
         toggle.addListener(this);
+
         addAndMakeVisible(nameLabel);
         nameLabel.setJustificationType(juce::Justification::left);
+
         addAndMakeVisible(timeLabel);
         timeLabel.setColour(juce::Label::textColourId, juce::Colours::dimgrey);
+
         addAndMakeVisible(urlLabel);
         urlLabel.setColour(juce::Label::textColourId, juce::Colours::dimgrey);
         urlLabel.setJustificationType(juce::Justification::left);
@@ -113,9 +129,11 @@ public:
         juce::ScopedValueSetter<bool> svs(guard, true);
         toggle.setToggleState(entry.selected, juce::dontSendNotification);
         nameLabel.setText(entry.file.name, juce::dontSendNotification);
+
         juce::String times;
         times << entry.file.start.toISO8601(true) << " → " << entry.file.end.toISO8601(true);
         timeLabel.setText(times, juce::dontSendNotification);
+
         urlLabel.setText(entry.file.url, juce::dontSendNotification);
     }
 
@@ -131,40 +149,38 @@ public:
 private:
     void buttonClicked(juce::Button* b) override
     {
-        if (guard)
-            return;
-        if (b == &toggle)
-            owner.onFileToggled(rowIndex, toggle.getToggleState());
+        if (guard) return;
+        if (b == &toggle) owner.onFileToggled(rowIndex, toggle.getToggleState());
     }
 
-    MainComponent& owner;
-    int rowIndex = 0;
+    MainComponent&     owner;
+    int                rowIndex = 0;
     juce::ToggleButton toggle;
-    juce::Label nameLabel;
-    juce::Label timeLabel;
-    juce::Label urlLabel;
-    bool guard = false;
+    juce::Label        nameLabel;
+    juce::Label        timeLabel;
+    juce::Label        urlLabel;
+    bool               guard = false;
 };
+
+// ======================= List Models =======================
 
 class MainComponent::GroupListModel : public juce::ListBoxModel
 {
 public:
     explicit GroupListModel(MainComponent& mc) : owner(mc) {}
+    int getNumRows() override { return static_cast<int>(owner.groups.size()); }
 
-    int getNumRows() override
+    juce::Component* refreshComponentForRow(int rowNumber, bool, juce::Component* existing) override
     {
-        return static_cast<int>(owner.groups.size());
-    }
-
-    juce::Component* refreshComponentForRow(int rowNumber, bool, juce::Component* existingComponent) override
-    {
-        auto* row = dynamic_cast<GroupRow*>(existingComponent);
-        if (row == nullptr)
-            row = new GroupRow(owner);
+        auto* row = dynamic_cast<GroupRow*>(existing);
+        if (row == nullptr) row = new GroupRow(owner);
         row->setRow(rowNumber);
-        row->update(owner.groups.at((size_t) rowNumber));
+        row->update(owner.groups.at((size_t)rowNumber));
         return row;
     }
+
+    // Required pure virtual in ListBoxModel
+    void paintListBoxItem(int, juce::Graphics&, int, int, bool) override {}
 
 private:
     MainComponent& owner;
@@ -174,25 +190,25 @@ class MainComponent::FileListModel : public juce::ListBoxModel
 {
 public:
     explicit FileListModel(MainComponent& mc) : owner(mc) {}
+    int getNumRows() override { return static_cast<int>(owner.files.size()); }
 
-    int getNumRows() override
+    juce::Component* refreshComponentForRow(int rowNumber, bool, juce::Component* existing) override
     {
-        return static_cast<int>(owner.files.size());
-    }
-
-    juce::Component* refreshComponentForRow(int rowNumber, bool, juce::Component* existingComponent) override
-    {
-        auto* row = dynamic_cast<FileRow*>(existingComponent);
-        if (row == nullptr)
-            row = new FileRow(owner);
+        auto* row = dynamic_cast<FileRow*>(existing);
+        if (row == nullptr) row = new FileRow(owner);
         row->setRow(rowNumber);
-        row->update(owner.files.at((size_t) rowNumber));
+        row->update(owner.files.at((size_t)rowNumber));
         return row;
     }
+
+    // Required pure virtual in ListBoxModel
+    void paintListBoxItem(int, juce::Graphics&, int, int, bool) override {}
 
 private:
     MainComponent& owner;
 };
+
+// ======================= MainComponent =======================
 
 MainComponent::MainComponent()
 {
@@ -251,7 +267,7 @@ MainComponent::MainComponent()
     setStatus("Ready");
 
     groupListModel = std::make_unique<GroupListModel>(*this);
-    fileListModel = std::make_unique<FileListModel>(*this);
+    fileListModel  = std::make_unique<FileListModel>(*this);
     setsList.setModel(groupListModel.get());
     filesList.setModel(fileListModel.get());
 
@@ -300,14 +316,10 @@ void MainComponent::resized()
 
 void MainComponent::buttonClicked(juce::Button* button)
 {
-    if (button == &listButton)
-        handleListSets();
-    else if (button == &previewButton)
-        handlePreview();
-    else if (button == &downloadButton)
-        handleDownload();
-    else if (button == &clipButton)
-        handleClip();
+    if (button == &listButton)            handleListSets();
+    else if (button == &previewButton)    handlePreview();
+    else if (button == &downloadButton)   handleDownload();
+    else if (button == &clipButton)       handleClip();
     else if (button == &chooseDestButton)
     {
         juce::FileChooser chooser("Choose destination", client.getDestinationDirectory());
@@ -317,29 +329,31 @@ void MainComponent::buttonClicked(juce::Button* button)
             destinationLabel.setText(chooser.getResult().getFullPathName(), juce::dontSendNotification);
         }
     }
-    else if (button == &logButton)
-        toggleLogWindow();
+    else if (button == &logButton)        toggleLogWindow();
 }
 
-void MainComponent::comboBoxChanged(juce::ComboBox*)
-{
-}
+void MainComponent::comboBoxChanged(juce::ComboBox*) {}
 
 void MainComponent::handleListSets()
 {
     auto site = client.codeForLabel(siteCombo.getText());
-    auto tag = tagEditor.getText().trim();
+    auto tag  = tagEditor.getText().trim();
+
     setStatus("Listing sets…");
     listButton.setEnabled(false);
     previewButton.setEnabled(false);
     downloadButton.setEnabled(false);
     clipButton.setEnabled(false);
 
-    runInBackground([this, site, tag]() {
+    runInBackground([this, site, tag]()
+    {
         try
         {
-            auto groupsResult = client.listProductGroups(site, tag, [this](const juce::String& msg) { logMessage(msg + "\n"); });
-            juce::MessageManager::callAsync([this, groupsResult]() mutable {
+            auto groupsResult = client.listProductGroups(site, tag,
+                [this](const juce::String& msg) { logMessage(msg + "\n"); });
+
+            juce::MessageManager::callAsync([this, groupsResult]() mutable
+            {
                 groups.clear();
                 for (auto& g : groupsResult)
                 {
@@ -352,14 +366,15 @@ void MainComponent::handleListSets()
                 setsList.updateContent();
                 setsList.repaint();
                 metadataView.showMessage("Select a set and click Info.");
-                previewButton.setEnabled(! groups.empty());
+                previewButton.setEnabled(!groups.empty());
                 listButton.setEnabled(true);
                 setStatus("Found " + juce::String(groups.size()) + " sets. Select and preview.");
             });
         }
         catch (const std::exception& e)
         {
-            juce::MessageManager::callAsync([this, msg = juce::String(e.what())]() {
+            juce::MessageManager::callAsync([this, msg = juce::String(e.what())]()
+            {
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "List failed", msg);
                 listButton.setEnabled(true);
                 setStatus("List failed");
@@ -377,45 +392,47 @@ void MainComponent::handlePreview()
         return;
     }
 
-    auto site = client.codeForLabel(siteCombo.getText());
+    auto site     = client.codeForLabel(siteCombo.getText());
     auto onlyLong = onlyLongRunsToggle.getToggleState();
 
     std::vector<ProductGroup> groupsToPreview;
-    groupsToPreview.reserve((size_t) selected.size());
+    groupsToPreview.reserve((size_t)selected.size());
     for (auto& entry : groups)
-        if (entry.selected)
-            groupsToPreview.push_back(entry.group);
-    if (groupsToPreview.empty())
-        return;
+        if (entry.selected) groupsToPreview.push_back(entry.group);
+    if (groupsToPreview.empty()) return;
 
     setStatus("Previewing…");
     previewButton.setEnabled(false);
     downloadButton.setEnabled(false);
     clipButton.setEnabled(false);
 
-    runInBackground([this, site, onlyLong, groupsToPreview = std::move(groupsToPreview)]() mutable {
+    runInBackground([this, site, onlyLong, groupsToPreview = std::move(groupsToPreview)]() mutable
+    {
         for (size_t idx = 0; idx < groupsToPreview.size(); ++idx)
         {
             const auto& group = groupsToPreview[idx];
             auto name = group.name;
+
             try
             {
                 logMessage("\n=== Preview " + name + " ===\n");
-                auto preview = client.previewGroup(site, group, onlyLong, [this](const juce::String& msg) { logMessage(msg + "\n"); });
+                auto preview = client.previewGroup(site, group, onlyLong,
+                    [this](const juce::String& msg) { logMessage(msg + "\n"); });
+
                 auto isLast = (idx + 1 == groupsToPreview.size());
-                juce::MessageManager::callAsync([this, name, preview, isLast]() mutable {
+                juce::MessageManager::callAsync([this, name, preview, isLast]() mutable
+                {
                     previewCache[name] = PreviewCache { preview.mode, preview.windows };
                     updateFileList(name, preview);
-                    if (isLast)
-                        previewButton.setEnabled(true);
-                    downloadButton.setEnabled(! files.empty());
-                    if (isLast)
-                        setStatus("Preview ready");
+                    if (isLast) previewButton.setEnabled(true);
+                    downloadButton.setEnabled(!files.empty());
+                    if (isLast) setStatus("Preview ready");
                 });
             }
             catch (const std::exception& e)
             {
-                juce::MessageManager::callAsync([this, msg = juce::String(e.what())]() {
+                juce::MessageManager::callAsync([this, msg = juce::String(e.what())]()
+                {
                     juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Preview failed", msg);
                     previewButton.setEnabled(true);
                     setStatus("Preview failed");
@@ -429,8 +446,8 @@ void MainComponent::handleDownload()
 {
     juce::StringArray urls;
     for (auto& f : files)
-        if (f.selected)
-            urls.addIfNotAlreadyThere(f.file.url);
+        if (f.selected) urls.addIfNotAlreadyThere(f.file.url);
+
     if (urls.isEmpty())
     {
         juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "Select at least one file", "");
@@ -440,11 +457,13 @@ void MainComponent::handleDownload()
     setStatus("Downloading files…");
     downloadButton.setEnabled(false);
 
-    runInBackground([this, urls]() {
+    runInBackground([this, urls]()
+    {
         try
         {
             client.downloadFiles(urls, [this](const juce::String& msg) { logMessage(msg + "\n"); });
-            juce::MessageManager::callAsync([this]() {
+            juce::MessageManager::callAsync([this]()
+            {
                 downloadButton.setEnabled(true);
                 clipButton.setEnabled(true);
                 setStatus("Download complete");
@@ -452,7 +471,8 @@ void MainComponent::handleDownload()
         }
         catch (const std::exception& e)
         {
-            juce::MessageManager::callAsync([this, msg = juce::String(e.what())]() {
+            juce::MessageManager::callAsync([this, msg = juce::String(e.what())]()
+            {
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Download failed", msg);
                 downloadButton.setEnabled(true);
                 setStatus("Download failed");
@@ -472,8 +492,8 @@ void MainComponent::handleClip()
 
     juce::StringArray basenames;
     for (auto& f : files)
-        if (f.selected)
-            basenames.addIfNotAlreadyThere(f.file.name);
+        if (f.selected) basenames.addIfNotAlreadyThere(f.file.name);
+
     if (basenames.isEmpty())
     {
         juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon, "Select files before clipping", "");
@@ -483,11 +503,17 @@ void MainComponent::handleClip()
     setStatus("Clipping…");
     clipButton.setEnabled(false);
 
-    runInBackground([this, selected, basenames]() {
+    auto selectedArr  = toArray(selected);
+    auto basenamesArr = toArray(basenames);
+
+    runInBackground([this, selectedArr, basenamesArr]()
+    {
         try
         {
-            auto summary = client.clipGroups(selected, previewCache, basenames, [this](const juce::String& msg) { logMessage(msg + "\n"); });
-            juce::MessageManager::callAsync([this, summary]() {
+            auto summary = client.clipGroups(selectedArr, previewCache, basenamesArr,
+                                             [this](const juce::String& msg) { logMessage(msg + "\n"); });
+            juce::MessageManager::callAsync([this, summary]()
+            {
                 clipButton.setEnabled(true);
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
                                                        "Clip complete",
@@ -497,7 +523,8 @@ void MainComponent::handleClip()
         }
         catch (const std::exception& e)
         {
-            juce::MessageManager::callAsync([this, msg = juce::String(e.what())]() {
+            juce::MessageManager::callAsync([this, msg = juce::String(e.what())]()
+            {
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Clip failed", msg);
                 clipButton.setEnabled(true);
                 setStatus("Clip failed");
@@ -547,8 +574,7 @@ juce::StringArray MainComponent::selectedGroupNames() const
 {
     juce::StringArray names;
     for (auto& entry : groups)
-        if (entry.selected)
-            names.add(entry.group.name);
+        if (entry.selected) names.add(entry.group.name);
     return names;
 }
 
@@ -574,26 +600,31 @@ void MainComponent::runInBackground(std::function<void()> task)
 
 void MainComponent::onGroupInfo(int index)
 {
-    if (index < 0 || index >= (int) groups.size())
-        return;
-    auto site = client.codeForLabel(siteCombo.getText());
-    auto groupName = groups[(size_t) index].group.name;
+    if (index < 0 || index >= (int)groups.size()) return;
+
+    auto site      = client.codeForLabel(siteCombo.getText());
+    auto groupName = groups[(size_t)index].group.name;
     metadataView.setGroupTitle(groupName);
     metadataView.showMessage("Loading metadata…");
 
-    runInBackground([this, site, groupName]() {
+    runInBackground([this, site, groupName]()
+    {
         try
         {
             juce::String raw;
-            auto summary = client.fetchMetadataSummary(site, groupName, raw, [this](const juce::String& msg) { logMessage(msg + "\n"); });
-            juce::MessageManager::callAsync([this, summary, raw]() {
+            auto summary = client.fetchMetadataSummary(site, groupName, raw,
+                [this](const juce::String& msg) { logMessage(msg + "\n"); });
+
+            juce::MessageManager::callAsync([this, summary, raw]()
+            {
                 metadataView.setSummary(summary);
                 metadataView.setRawJson(raw);
             });
         }
         catch (const std::exception& e)
         {
-            juce::MessageManager::callAsync([this, msg = juce::String(e.what())]() {
+            juce::MessageManager::callAsync([this, msg = juce::String(e.what())]()
+            {
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Metadata error", msg);
                 metadataView.showMessage("Metadata failed");
             });
@@ -603,23 +634,20 @@ void MainComponent::onGroupInfo(int index)
 
 void MainComponent::onGroupToggled(int index, bool state)
 {
-    if (index < 0 || index >= (int) groups.size())
-        return;
-    groups[(size_t) index].selected = state;
+    if (index < 0 || index >= (int)groups.size()) return;
+    groups[(size_t)index].selected = state;
 }
 
 void MainComponent::onFileToggled(int index, bool state)
 {
-    if (index < 0 || index >= (int) files.size())
-        return;
-    files[(size_t) index].selected = state;
+    if (index < 0 || index >= (int)files.size()) return;
+    files[(size_t)index].selected = state;
     updateSelectionLabel();
 }
 
 void MainComponent::selectAllFiles(bool state)
 {
-    for (auto& f : files)
-        f.selected = state;
+    for (auto& f : files) f.selected = state;
     filesList.updateContent();
     updateSelectionLabel();
 }
@@ -646,8 +674,8 @@ void MainComponent::updateSelectionLabel()
 {
     int count = 0;
     for (auto& f : files)
-        if (f.selected)
-            ++count;
+        if (f.selected) ++count;
+
     selectionLabel.setText(juce::String(count) + " files selected", juce::dontSendNotification);
 }
 

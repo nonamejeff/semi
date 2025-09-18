@@ -2,6 +2,9 @@
 
 namespace sanctsound
 {
+
+// ======================== SummaryPanel (full type) ========================
+
 class MetadataView::SummaryPanel : public juce::Component
 {
 public:
@@ -27,12 +30,12 @@ public:
           sampleRateValue(sampleRate),
           noteValue(note),
           titles(titlesRef)
-    {
-    }
+    {}
 
     void resized() override
     {
         auto area = getLocalBounds().reduced(12);
+
         if (message.isVisible())
         {
             message.setBounds(area);
@@ -49,24 +52,24 @@ public:
             value.setBounds(bounds.reduced(0, 2));
         };
 
-        auto columnWidth = juce::jmax(120, area.getWidth() / 3);
-        auto rowHeight = 72;
+        const int columnWidth = juce::jmax(120, area.getWidth() / 3);
+        const int rowHeight   = 72;
 
         auto row1 = area.removeFromTop(rowHeight);
         layoutCard(row1.removeFromLeft(columnWidth), titles.size() > 0 ? titles[0].get() : nullptr, siteValue);
         layoutCard(row1.removeFromLeft(columnWidth), titles.size() > 1 ? titles[1].get() : nullptr, deploymentValue);
-        layoutCard(row1, titles.size() > 2 ? titles[2].get() : nullptr, platformValue);
+        layoutCard(row1,                                 titles.size() > 2 ? titles[2].get() : nullptr, platformValue);
 
         auto row2 = area.removeFromTop(rowHeight);
         layoutCard(row2.removeFromLeft(columnWidth), titles.size() > 3 ? titles[3].get() : nullptr, recorderValue);
-        layoutCard(row2, titles.size() > 4 ? titles[4].get() : nullptr, coordinatesValue);
+        layoutCard(row2,                                 titles.size() > 4 ? titles[4].get() : nullptr, coordinatesValue);
 
         auto row3 = area.removeFromTop(rowHeight);
         layoutCard(row3.removeFromLeft(columnWidth), titles.size() > 5 ? titles[5].get() : nullptr, startValue);
         layoutCard(row3.removeFromLeft(columnWidth), titles.size() > 6 ? titles[6].get() : nullptr, endValue);
-        layoutCard(row3, titles.size() > 7 ? titles[7].get() : nullptr, sampleRateValue);
+        layoutCard(row3,                                 titles.size() > 7 ? titles[7].get() : nullptr, sampleRateValue);
 
-        layoutCard(area, titles.size() > 8 ? titles[8].get() : nullptr, noteValue);
+        layoutCard(area,                                titles.size() > 8 ? titles[8].get() : nullptr, noteValue);
     }
 
 private:
@@ -82,6 +85,8 @@ private:
     juce::Label& noteValue;
     std::vector<std::unique_ptr<juce::Label>>& titles;
 };
+
+// ======================== MetadataView impl ========================
 
 MetadataView::MetadataView()
 {
@@ -101,7 +106,6 @@ MetadataView::MetadataView()
                                                 sampleRateValue,
                                                 noteValue,
                                                 titleLabels);
-
     tabs.addTab("Summary", juce::Colours::transparentBlack, summaryTab.get(), false);
 
     rawEditor.setMultiLine(true, true);
@@ -116,6 +120,9 @@ MetadataView::MetadataView()
     initialiseSummaryCards();
     showMessage("Select a set to view metadata.");
 }
+
+// Out-of-line dtor so unique_ptr<SummaryPanel> sees the full type
+MetadataView::~MetadataView() = default;
 
 void MetadataView::initialiseSummaryCards()
 {
@@ -146,44 +153,45 @@ void MetadataView::initialiseSummaryCards()
         summaryTab->addAndMakeVisible(value);
     };
 
-    addCard("SITE", siteValue);
-    addCard("DEPLOYMENT", deploymentValue);
-    addCard("PLATFORM", platformValue);
-    addCard("RECORDER", recorderValue);
-    addCard("COORDINATES / DEPTH", coordinatesValue);
-    addCard("START (UTC)", startValue);
-    addCard("END (UTC)", endValue);
-    addCard("SAMPLE RATE", sampleRateValue);
-    addCard("LOCATION NOTE", noteValue);
+    addCard("SITE",                 siteValue);
+    addCard("DEPLOYMENT",           deploymentValue);
+    addCard("PLATFORM",             platformValue);
+    addCard("RECORDER",             recorderValue);
+    addCard("COORDINATES / DEPTH",  coordinatesValue);
+    addCard("START (UTC)",          startValue);
+    addCard("END (UTC)",            endValue);
+    addCard("SAMPLE RATE",          sampleRateValue);
+    addCard("LOCATION NOTE",        noteValue);
 }
 
 void MetadataView::setGroupTitle(const juce::String& groupName)
 {
-    titleLabel.setText(groupName.isNotEmpty() ? groupName : juce::String("Metadata"), juce::dontSendNotification);
+    titleLabel.setText(groupName.isNotEmpty() ? groupName : juce::String("Metadata"),
+                       juce::dontSendNotification);
 }
 
 void MetadataView::setSummary(const MetadataSummary& summary)
 {
     messageLabel.setVisible(false);
-    for (auto& title : titleLabels)
-        title->setVisible(true);
+    for (auto& title : titleLabels) title->setVisible(true);
 
     auto setValue = [](juce::Label& label, const juce::String& text)
     {
         auto trimmed = text.trim();
-        label.setText(trimmed.isNotEmpty() ? trimmed : juce::String("—"), juce::dontSendNotification);
+        label.setText(trimmed.isNotEmpty() ? trimmed : juce::String("—"),
+                      juce::dontSendNotification);
         label.setVisible(true);
     };
 
-    setValue(siteValue, summary.site);
-    setValue(deploymentValue, summary.deployment);
-    setValue(platformValue, summary.platform);
-    setValue(recorderValue, summary.recorder);
-    setValue(coordinatesValue, summary.coordinates);
-    setValue(startValue, summary.start);
-    setValue(endValue, summary.end);
-    setValue(sampleRateValue, summary.sampleRate);
-    setValue(noteValue, summary.note);
+    setValue(siteValue,         summary.site);
+    setValue(deploymentValue,   summary.deployment);
+    setValue(platformValue,     summary.platform);
+    setValue(recorderValue,     summary.recorder);
+    setValue(coordinatesValue,  summary.coordinates);
+    setValue(startValue,        summary.start);
+    setValue(endValue,          summary.end);
+    setValue(sampleRateValue,   summary.sampleRate);
+    setValue(noteValue,         summary.note);
 
     summaryTab->resized();
 }
@@ -197,8 +205,8 @@ void MetadataView::showMessage(const juce::String& message)
 {
     messageLabel.setText(message, juce::dontSendNotification);
     messageLabel.setVisible(true);
-    for (auto& title : titleLabels)
-        title->setVisible(false);
+
+    for (auto& title : titleLabels) title->setVisible(false);
 
     auto hideValue = [](juce::Label& label)
     {
