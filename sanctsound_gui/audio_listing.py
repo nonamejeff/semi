@@ -9,7 +9,7 @@ from .timeparse import parse_audio_start_from_name, parse_audio_start_from_url
 def list_site_deployments(site: str) -> list[str]:
     base = f"{AUDIO_PREFIX}/{site}/"
     folders = []
-    for line in run_cmd(["gsutil", "ls", base]):
+    for line in run_cmd(["gsutil", "ls", base], ok_returncodes=(0, 1)):
         if line.strip().endswith("/"):
             name = line.strip().split("/")[-2]
             if name.startswith("sanctsound_"):
@@ -31,7 +31,7 @@ def list_audio_files_in_folder(site: str, folder: str, tmin, tmax):
     pat = f"{AUDIO_PREFIX}/{site}/{folder}/audio/*.flac"
     rows = []
     left_candidate = None
-    for line in run_cmd(["gsutil", "ls", "-r", pat]):
+    for line in run_cmd(["gsutil", "ls", "-r", pat], ok_returncodes=(0, 1)):
         if not (line.startswith("gs://") and line.lower().endswith(".flac")):
             continue
         url = line.strip()

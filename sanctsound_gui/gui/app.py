@@ -143,7 +143,7 @@ def label_to_code(label: str) -> str:
 def _gcs_ls_metadata_jsons(site: str, group: str, log_cb) -> List[str]:
     pat = f"{PRODUCTS_PREFIX}/{site}/{group}/metadata/*.json"
     out=[]
-    for line in run_cmd(["gsutil","ls","-r",pat]):
+    for line in run_cmd(["gsutil","ls","-r",pat], ok_returncodes=(0, 1)):
         s=line.strip()
         if s.startswith("gs://") and s.lower().endswith(".json"):
             out.append(s)

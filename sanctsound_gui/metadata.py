@@ -122,7 +122,7 @@ def _discover_sites(verbose: bool) -> List[str]:
 
     if verbose:
         print(f"[sites] ls {base}", flush=True)
-    for line in run_cmd(["gsutil", "ls", base]):
+    for line in run_cmd(["gsutil", "ls", base], ok_returncodes=(0, 1)):
         s = line.strip()
         m = SITE_RE.search(s)
         if m:
@@ -132,7 +132,7 @@ def _discover_sites(verbose: bool) -> List[str]:
         pat = f"{PRODUCTS_PREFIX}/**"
         if verbose:
             print(f"[sites-fallback] ls -r {pat}", flush=True)
-        for line in run_cmd(["gsutil", "ls", "-r", pat]):
+        for line in run_cmd(["gsutil", "ls", "-r", pat], ok_returncodes=(0, 1)):
             s = line.strip()
             if not s.startswith("gs://"):
                 continue
@@ -157,7 +157,7 @@ def _scan_site_objects(site: str, verbose: bool) -> Tuple[Dict[str, List[str]], 
     pat = f"{PRODUCTS_PREFIX}/{site}/**"
     if verbose:
         print(f"[{site}] ls -r {pat}", flush=True)
-    for line in run_cmd(["gsutil", "ls", "-r", pat]):
+    for line in run_cmd(["gsutil", "ls", "-r", pat], ok_returncodes=(0, 1)):
         s = line.strip()
         if not s.startswith("gs://"):
             continue

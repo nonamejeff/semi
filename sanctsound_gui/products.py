@@ -41,7 +41,7 @@ def list_product_groups(site: str, tag: str, log_cb: Optional[Callable[[str], No
 
     for g in globs:
         _log(log_cb, f"[ls] {g}")
-        for line in run_cmd(["gsutil", "ls", "-r", g]):
+        for line in run_cmd(["gsutil", "ls", "-r", g], ok_returncodes=(0, 1)):
             url = line.strip()
             if not (url.startswith("gs://") and not url.endswith("/")):
                 continue
