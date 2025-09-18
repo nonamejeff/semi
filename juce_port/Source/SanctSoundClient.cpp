@@ -1006,10 +1006,9 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
         return summary;
 
     juce::Array<LocalAudio> local;
-    juce::DirectoryIterator it(destination, false, "*.flac", juce::File::findFiles);
-    while (it.next())
+    for (const auto& entry : juce::RangedDirectoryIterator(destination, false, "*.flac", juce::File::findFiles))
     {
-        auto file = it.getFile();
+        auto file = entry.getFile();
         if (! selectedBasenames.contains(file.getFileName()))
             continue;
         auto startOpt = parseAudioStartFromName(file.getFileName());
