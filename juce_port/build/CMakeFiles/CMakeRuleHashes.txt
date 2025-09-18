@@ -1,0 +1,3 @@
+# Hashes of file build rules.
+b909b9cf7690fc1e1da7d553e80916c9 SanctSoundJuceApp_artefacts/JuceLibraryCode/JuceHeader.h
+527237b7ccabc579d5cfcb8dda7bd82e SanctSoundJuceApp_artefacts/JuceLibraryCode/SanctSoundJuceApp/PkgInfo
