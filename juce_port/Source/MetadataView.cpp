@@ -110,7 +110,8 @@ MetadataView::MetadataView()
 
     rawEditor.setMultiLine(true, true);
     rawEditor.setReadOnly(true);
-    rawEditor.setScrollbarsShown(true, true);
+    // JUCE 8: this now takes a single bool
+    rawEditor.setScrollbarsShown(true);
     rawEditor.setFont(juce::Font(13.0f));
     rawEditor.setTextToShowWhenEmpty("Select a set to view metadata.", juce::Colours::grey);
     tabs.addTab("Raw JSON", juce::Colours::transparentBlack, &rawEditor, false);
