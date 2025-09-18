@@ -1,19 +1,31 @@
 from __future__ import annotations
 import subprocess
 from shutil import which as _which
-from typing import Iterable
+from typing import Iterable, Tuple
 
 def which(binname: str) -> str | None:
     return _which(binname)
 
-def run_cmd(argv: list[str]) -> Iterable[str]:
-    """Yield lines from a subprocess, raising on non-zero exit."""
+def run_cmd(argv: list[str], *, ok_returncodes: Tuple[int, ...] = (0,)) -> Iterable[str]:
+    """Yield lines from a subprocess, raising on unexpected exit codes.
+
+    Args:
+        argv: Command + arguments to execute.
+        ok_returncodes: Tuple of process return codes that should not
+            raise an exception. By default only ``0`` is considered
+            successful.
+    """
     p = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    for line in iter(p.stdout.readline, ''):
-        yield line.rstrip("\n")
-    p.stdout.close()
+    try:
+        stdout = p.stdout
+        if stdout is not None:
+            for line in iter(stdout.readline, ''):
+                yield line.rstrip("\n")
+    finally:
+        if p.stdout:
+            p.stdout.close()
     p.wait()
-    if p.returncode != 0:
+    if p.returncode not in ok_returncodes:
         raise subprocess.CalledProcessError(p.returncode, argv)
 
 def ffprobe_duration_seconds(path: str) -> float | None:
