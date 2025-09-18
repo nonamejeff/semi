@@ -9,6 +9,11 @@ option(SANCTSOUND_HEADLESS "Build without JUCE GUI (for CI/Codex Linux)" OFF)
 # JUCE vendored
 set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(JUCE_BUILD_EXTRAS   OFF CACHE BOOL "" FORCE)
+if (SANCTSOUND_HEADLESS)
+    # Avoid building juceaide (and GUI/X11 dependencies) when we only need
+    # the JUCE modules for the command-line target.
+    set(JUCE_MODULES_ONLY ON CACHE BOOL "" FORCE)
+endif()
 add_subdirectory(external/JUCE)
 
 # Common sources (non-GUI)
@@ -28,11 +33,15 @@ if (SANCTSOUND_HEADLESS)
     target_link_libraries(SanctSoundCli PRIVATE
         juce::juce_core
         juce::juce_data_structures
-        juce::juce_events
-        juce::juce_audio_basics
-        juce::juce_audio_devices
-        juce::juce_dsp
-        # ^ keep only non-GUI modules
+    )
+    find_package(CURL REQUIRED)
+    target_link_libraries(SanctSoundCli PRIVATE CURL::libcurl)
+    set_target_properties(SanctSoundCli PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
     )
 else()
     # ---- Full GUI app for macOS/local ----
