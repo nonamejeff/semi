@@ -30,7 +30,7 @@ juce::String formatExtCounts(const ProductGroup& group)
     return parts.joinIntoString(", ");
 }
 
-// Convert juce::StringArray → juce::Array<juce::String>
+// Convert juce::StringArray -> juce::Array<juce::String>
 static juce::Array<juce::String> toArray(const juce::StringArray& sa)
 {
     juce::Array<juce::String> a;
@@ -151,7 +151,7 @@ public:
             nameLabel.setText(entry->file.name, juce::dontSendNotification);
 
             juce::String times;
-            times << entry->file.start.toISO8601(true) << " → " << entry->file.end.toISO8601(true);
+            times << entry->file.start.toISO8601(true) << " -> " << entry->file.end.toISO8601(true);
             timeLabel.setText(times, juce::dontSendNotification);
 
             urlLabel.setText(entry->file.url, juce::dontSendNotification);
@@ -277,14 +277,14 @@ MainComponent::MainComponent()
 
     tagEditor.setText("dolphin");
     tagEditor.setTextToShowWhenEmpty("dolphin", juce::Colours::grey);
-    onlyLongRunsToggle.setButtonText("Only runs ≥ 2h");
+    onlyLongRunsToggle.setButtonText("Only runs >= 2h");
     refreshButton.setButtonText("Refresh");
     listButton.setButtonText("List sets");
     previewButton.setButtonText("Preview");
     downloadButton.setButtonText("Download");
     clipButton.setButtonText("Clip");
-    chooseDestButton.setButtonText("Choose…");
-    logButton.setButtonText("Log…");
+    chooseDestButton.setButtonText("Choose...");
+    logButton.setButtonText("Log...");
 
     previewButton.setEnabled(false);
     downloadButton.setEnabled(false);
@@ -383,7 +383,7 @@ void MainComponent::handleListSets()
     auto site = client.codeForLabel(siteCombo.getText());
     auto tag  = tagEditor.getText().trim();
 
-    setStatus("Listing sets…");
+    setStatus("Listing sets...");
     listButton.setEnabled(false);
     previewButton.setEnabled(false);
     downloadButton.setEnabled(false);
@@ -445,7 +445,7 @@ void MainComponent::handlePreview()
         if (entry.selected) groupsToPreview.push_back(entry.group);
     if (groupsToPreview.empty()) return;
 
-    setStatus("Previewing…");
+    setStatus("Previewing...");
     previewButton.setEnabled(false);
     downloadButton.setEnabled(false);
     clipButton.setEnabled(false);
@@ -498,7 +498,7 @@ void MainComponent::handleDownload()
         return;
     }
 
-    setStatus("Downloading files…");
+    setStatus("Downloading files...");
     downloadButton.setEnabled(false);
 
     runInBackground([this, urls]()
@@ -544,7 +544,7 @@ void MainComponent::handleClip()
         return;
     }
 
-    setStatus("Clipping…");
+    setStatus("Clipping...");
     clipButton.setEnabled(false);
 
     auto selectedArr  = toArray(selected);
@@ -649,7 +649,7 @@ void MainComponent::onGroupInfo(int index)
     auto site      = client.codeForLabel(siteCombo.getText());
     auto groupName = groups[(size_t)index].group.name;
     metadataView.setGroupTitle(groupName);
-    metadataView.showMessage("Loading metadata…");
+    metadataView.showMessage("Loading metadata...");
 
     runInBackground([this, site, groupName]()
     {

@@ -177,7 +177,7 @@ void MetadataView::setSummary(const MetadataSummary& summary)
     auto setValue = [](juce::Label& label, const juce::String& text)
     {
         auto trimmed = text.trim();
-        label.setText(trimmed.isNotEmpty() ? trimmed : juce::String("—"),
+        label.setText(trimmed.isNotEmpty() ? trimmed : juce::String("-"),
                       juce::dontSendNotification);
         label.setVisible(true);
     };
@@ -209,7 +209,7 @@ void MetadataView::showMessage(const juce::String& message)
 
     auto hideValue = [](juce::Label& label)
     {
-        label.setText("—", juce::dontSendNotification);
+        label.setText("-", juce::dontSendNotification);
         label.setVisible(false);
     };
 

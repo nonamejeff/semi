@@ -12,7 +12,7 @@ int main()
     try
     {
         sanctsound::SanctSoundClient client;
-        // Do a light sanity check that doesn’t hit GUI or network-only paths
+        // Do a light sanity check that doesn't hit GUI or network-only paths
         // (Adjust to whatever is safe in Codex)
         auto labels = client.siteLabels(); // if this is static; otherwise just log
         Logger::writeToLog("Sites: " + String(labels.size()));
