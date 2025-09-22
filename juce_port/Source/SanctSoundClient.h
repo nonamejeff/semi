@@ -49,10 +49,6 @@ public:
                            LogFn log) const;
 
 private:
-    static juce::var fetchGcsJson(const juce::String& bucket,
-                                  const juce::String& prefix,
-                                  const juce::String& delimiter = "/");
-
     juce::File destination;
 
     juce::String gcsBucket;
