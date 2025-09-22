@@ -72,6 +72,13 @@ juce::var fetchGcsJsonPage(const juce::String& bucket,
     return fetchGcsJsonInternal(bucket, prefix, delimiter, pageToken);
 }
 
+juce::var fetchGcsJsonFirstPage(const juce::String& bucket,
+                                const juce::String& prefix,
+                                const juce::String& delimiter = "/")
+{
+    return fetchGcsJsonInternal(bucket, prefix, delimiter, {});
+}
+
 juce::String makeGsUrl(const juce::String& bucket, const juce::String& objectName)
 {
     return "gs://" + bucket + "/" + objectName;
@@ -568,7 +575,7 @@ juce::Array<AudioReference> listAudioFilesInFolder(const juce::String& site,
     do
     {
         juce::var response = pageToken.isEmpty()
-                                 ? fetchGcsJson(bucket, prefix)
+                                 ? fetchGcsJsonFirstPage(bucket, prefix)
                                  : fetchGcsJsonPage(bucket, prefix, "/", pageToken);
 
         auto* obj = response.getDynamicObject();
@@ -660,7 +667,7 @@ juce::Array<AudioReference> listAudioFilesAcross(const juce::String& site,
     do
     {
         juce::var response = pageToken.isEmpty()
-                                 ? fetchGcsJson(bucket, basePrefix)
+                                 ? fetchGcsJsonFirstPage(bucket, basePrefix)
                                  : fetchGcsJsonPage(bucket, basePrefix, "/", pageToken);
 
         auto* obj = response.getDynamicObject();
@@ -864,13 +871,6 @@ juce::String stampForFilename(const juce::Time& t)
 
 } // namespace
 
-juce::var SanctSoundClient::fetchGcsJson(const juce::String& bucket,
-                                         const juce::String& prefix,
-                                         const juce::String& delimiter)
-{
-    return fetchGcsJsonInternal(bucket, prefix, delimiter, {});
-}
-
 SanctSoundClient::SanctSoundClient()
 {
     destination = juce::File::getCurrentWorkingDirectory().getChildFile("data/raw");
@@ -930,7 +930,7 @@ std::vector<ProductGroup> SanctSoundClient::listProductGroups(const juce::String
         do
         {
             juce::var response = pageToken.isEmpty()
-                                     ? fetchGcsJson(gcsBucket, current)
+                                     ? fetchGcsJsonFirstPage(gcsBucket, current)
                                      : fetchGcsJsonPage(gcsBucket, current, "/", pageToken);
 
             auto* obj = response.getDynamicObject();
@@ -1024,7 +1024,7 @@ MetadataSummary SanctSoundClient::fetchMetadataSummary(const juce::String& site,
     do
     {
         juce::var response = pageToken.isEmpty()
-                                 ? fetchGcsJson(gcsBucket, metadataPrefix)
+                                 ? fetchGcsJsonFirstPage(gcsBucket, metadataPrefix)
                                  : fetchGcsJsonPage(gcsBucket, metadataPrefix, "/", pageToken);
 
         auto* obj = response.getDynamicObject();
