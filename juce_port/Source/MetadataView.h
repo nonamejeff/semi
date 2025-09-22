@@ -12,7 +12,7 @@ class MetadataView : public juce::Component
 {
 public:
     MetadataView();
-    ~MetadataView(); // <— out-of-line dtor so unique_ptr<SummaryPanel> is destroyed with full type
+    ~MetadataView(); // <- out-of-line dtor so unique_ptr<SummaryPanel> is destroyed with full type
 
     void setGroupTitle(const juce::String& groupName);
     void setSummary(const MetadataSummary& summary);
@@ -36,7 +36,7 @@ private:
 
     std::vector<std::unique_ptr<juce::Label>> titleLabels;
 
-    // “Value” labels placed inside SummaryPanel
+    // "Value" labels placed inside SummaryPanel
     juce::Label siteValue;
     juce::Label deploymentValue;
     juce::Label platformValue;

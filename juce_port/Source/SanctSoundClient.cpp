@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <string>
 #include <stdexcept>
 #include <vector>
 
@@ -37,18 +38,79 @@ const std::map<juce::String, juce::String, std::less<>> kSitePrefixName {
     { "sb", "Stellwagen Bank" }
 };
 
+juce::var fetchGcsJsonInternal(const juce::String& bucket,
+                               const juce::String& prefix,
+                               const juce::String& delimiter,
+                               const juce::String& pageToken)
+{
+    juce::String url =
+        "https://storage.googleapis.com/storage/v1/b/" + bucket +
+        "/o?prefix=" + juce::URL::addEscapeChars(prefix, true) +
+        "&delimiter=" + juce::URL::addEscapeChars(delimiter, true);
+
+    if (pageToken.isNotEmpty())
+        url += "&pageToken=" + juce::URL::addEscapeChars(pageToken, true);
+
+    juce::URL u(url);
+    auto stream = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+                                          .withConnectionTimeoutMs(15000));
+    if (stream == nullptr)
+        throw std::runtime_error("GCS request failed: no stream");
+
+    juce::String jsonText = stream->readEntireStreamAsString();
+    juce::var v = juce::JSON::parse(jsonText);
+    if (v.isVoid() || v.isUndefined())
+        throw std::runtime_error("GCS parse failed");
+    return v;
+}
+
+juce::var fetchGcsJsonPage(const juce::String& bucket,
+                           const juce::String& prefix,
+                           const juce::String& delimiter,
+                           const juce::String& pageToken)
+{
+    return fetchGcsJsonInternal(bucket, prefix, delimiter, pageToken);
+}
+
+juce::String makeGsUrl(const juce::String& bucket, const juce::String& objectName)
+{
+    return "gs://" + bucket + "/" + objectName;
+}
+
+juce::String makeHttpsUrl(const juce::String& bucket, const juce::String& objectName)
+{
+    return "https://storage.googleapis.com/" + bucket + "/" + juce::URL::addEscapeChars(objectName, false);
+}
+
+bool parseGsUrl(const juce::String& url, juce::String& bucketOut, juce::String& objectOut)
+{
+    auto trimmed = url.trim();
+    if (! trimmed.startsWithIgnoreCase("gs://"))
+        return false;
+
+    auto remainder = trimmed.substring(5);
+    auto slash = remainder.indexOfChar('/');
+    if (slash < 0)
+        return false;
+
+    bucketOut = remainder.substring(0, slash);
+    objectOut = remainder.substring(slash + 1);
+    return bucketOut.isNotEmpty() && objectOut.isNotEmpty();
+}
+
 juce::String siteLabelForCode(const juce::String& code)
 {
     auto c = code.trim().toLowerCase();
     auto prefix = c.substring(0, 2);
     auto friendly = kSitePrefixName.count(prefix) ? kSitePrefixName.at(prefix) : prefix.toUpperCase();
-    return friendly + " — " + c.toUpperCase();
+    return friendly + " - " + c.toUpperCase();
 }
 
 juce::String labelToCode(const juce::String& label)
 {
-    if (label.contains("—"))
-        return label.fromLastOccurrenceOf("—", false, false).trim().toLowerCase();
+    const auto emDash = juce::String::charToString(0x2014);
+    if (label.contains(emDash))
+        return label.fromLastOccurrenceOf(emDash, false, false).trim().toLowerCase();
     if (label.contains("-"))
         return label.fromLastOccurrenceOf("-", false, false).trim().toLowerCase();
     return label.trim().toLowerCase();
@@ -95,29 +157,6 @@ bool timeLessThan(const juce::Time& a, const juce::Time& b)
 bool timeLessThanOrEqual(const juce::Time& a, const juce::Time& b)
 {
     return a.toMilliseconds() <= b.toMilliseconds();
-}
-
-bool containsNoMatchesMessage(const juce::String& text)
-{
-    if (text.isEmpty())
-        return false;
-
-    auto lower = text.toLowerCase();
-    return lower.contains("no urls matched")
-        || lower.contains("matched no objects")
-        || lower.contains("0 matched your query");
-}
-
-bool isNoMatchesError(const CommandResult& result)
-{
-    if (containsNoMatchesMessage(result.output.trim()))
-        return true;
-
-    for (auto& line : result.lines)
-        if (containsNoMatchesMessage(line.trim()))
-            return true;
-
-    return false;
 }
 
 void removeDuplicateTimesInPlace(juce::Array<juce::Time>& values)
@@ -517,38 +556,64 @@ juce::Array<AudioReference> listAudioFilesInFolder(const juce::String& site,
                                                    const juce::String& folder,
                                                    const juce::Time& tmin,
                                                    const juce::Time& tmax,
-                                                   const juce::String& audioPrefix)
+                                                   const juce::String& audioPrefix,
+                                                   const juce::String& bucket)
 {
     juce::Array<AudioReference> files;
-    auto pattern = audioPrefix + "/" + site + "/" + folder + "/audio/*.flac";
-    auto result = runCommand({ "gsutil", "ls", "-r", pattern });
-    if (result.exitCode != 0)
-        throw std::runtime_error(humaniseError("gsutil ls", result).toStdString());
-
-    juce::StringArray lines;
-    lines.addLines(result.output);
+    auto prefix = audioPrefix + "/" + site + "/" + folder + "/audio/";
 
     juce::Optional<AudioReference> leftCandidate;
-    for (auto& line : lines)
+
+    juce::String pageToken;
+    do
     {
-        auto url = line.trim();
-        if (! (url.startsWith("gs://") && url.endsWithIgnoreCase(".flac")))
-            continue;
-        auto name = url.fromLastOccurrenceOf("/", false, false);
-        auto startOpt = parseAudioStartFromName(name);
-        if (! startOpt)
-            continue;
-        auto start = *startOpt;
-        if (tmin.toMilliseconds() != 0 && timeLessThan(start, tmin))
+        juce::var response = pageToken.isEmpty()
+                                 ? fetchGcsJson(bucket, prefix)
+                                 : fetchGcsJsonPage(bucket, prefix, "/", pageToken);
+
+        auto* obj = response.getDynamicObject();
+        if (obj == nullptr)
+            break;
+
+        auto itemsVar = obj->getProperty("items");
+        if (auto* itemsArray = itemsVar.getArray())
         {
-            if (! leftCandidate.hasValue() || timeLessThan(leftCandidate->start, start))
-                leftCandidate = AudioReference{ url, name, start, {}, folder };
-            continue;
+            for (auto& item : *itemsArray)
+            {
+                auto* itemObj = item.getDynamicObject();
+                if (itemObj == nullptr)
+                    continue;
+
+                auto nameVar = itemObj->getProperty("name");
+                if (! nameVar.isString())
+                    continue;
+
+                auto objectName = nameVar.toString();
+                if (! objectName.endsWithIgnoreCase(".flac"))
+                    continue;
+
+                auto url = makeGsUrl(bucket, objectName);
+                auto name = url.fromLastOccurrenceOf("/", false, false);
+
+                auto startOpt = parseAudioStartFromName(name);
+                if (! startOpt)
+                    continue;
+                auto start = *startOpt;
+                if (tmin.toMilliseconds() != 0 && timeLessThan(start, tmin))
+                {
+                    if (! leftCandidate.hasValue() || timeLessThan(leftCandidate->start, start))
+                        leftCandidate = AudioReference{ url, name, start, {}, folder };
+                    continue;
+                }
+                if (tmax.toMilliseconds() != 0 && timeLessThan(tmax, start))
+                    continue;
+                files.add({ url, name, start, {}, folder });
+            }
         }
-        if (tmax.toMilliseconds() != 0 && timeLessThan(tmax, start))
-            continue;
-        files.add({ url, name, start, {}, folder });
-    }
+
+        auto nextVar = obj->getProperty("nextPageToken");
+        pageToken = nextVar.isString() ? nextVar.toString() : juce::String();
+    } while (pageToken.isNotEmpty());
 
     if (leftCandidate.hasValue())
     {
@@ -585,24 +650,41 @@ juce::Array<AudioReference> listAudioFilesAcross(const juce::String& site,
                                                 const juce::String& preferredFolder,
                                                 const juce::Time& tmin,
                                                 const juce::Time& tmax,
-                                                const juce::String& audioPrefix)
+                                                const juce::String& audioPrefix,
+                                                const juce::String& bucket)
 {
-    auto base = audioPrefix + "/" + site + "/";
-    auto result = runCommand({ "gsutil", "ls", base });
-    if (result.exitCode != 0)
-        throw std::runtime_error(humaniseError("gsutil ls", result).toStdString());
-
+    auto basePrefix = audioPrefix + "/" + site + "/";
     juce::StringArray folders;
-    juce::StringArray lines;
-    lines.addLines(result.output);
-    for (auto& line : lines)
+
+    juce::String pageToken;
+    do
     {
-        if (! line.trim().endsWithChar('/'))
-            continue;
-        auto name = line.trim().upToLastOccurrenceOf("/", false, false).fromLastOccurrenceOf("/", false, false);
-        if (name.startsWithIgnoreCase("sanctsound_"))
-            folders.add(name);
-    }
+        juce::var response = pageToken.isEmpty()
+                                 ? fetchGcsJson(bucket, basePrefix)
+                                 : fetchGcsJsonPage(bucket, basePrefix, "/", pageToken);
+
+        auto* obj = response.getDynamicObject();
+        if (obj == nullptr)
+            break;
+
+        auto prefixesVar = obj->getProperty("prefixes");
+        if (auto* prefixArray = prefixesVar.getArray())
+        {
+            for (auto& entry : *prefixArray)
+            {
+                if (! entry.isString())
+                    continue;
+                auto prefix = entry.toString();
+                auto trimmed = prefix.trimCharactersAtEnd("/");
+                auto name = trimmed.fromLastOccurrenceOf("/", false, false);
+                if (name.startsWithIgnoreCase("sanctsound_"))
+                    folders.addIfNotAlreadyThere(name);
+            }
+        }
+
+        auto nextVar = obj->getProperty("nextPageToken");
+        pageToken = nextVar.isString() ? nextVar.toString() : juce::String();
+    } while (pageToken.isNotEmpty());
 
     juce::StringArray ordered;
     if (preferredFolder.isNotEmpty())
@@ -614,7 +696,7 @@ juce::Array<AudioReference> listAudioFilesAcross(const juce::String& site,
     juce::Array<AudioReference> all;
     for (auto& folder : ordered)
     {
-        auto files = listAudioFilesInFolder(site, folder, tmin, tmax, audioPrefix);
+        auto files = listAudioFilesInFolder(site, folder, tmin, tmax, audioPrefix, bucket);
         all.addArray(files);
     }
 
@@ -676,14 +758,52 @@ std::vector<DownloadedFile> downloadFilesTo(const juce::StringArray& urls,
                                             SanctSoundClient::LogFn log)
 {
     std::vector<DownloadedFile> out;
+    dest.createDirectory();
     for (auto& url : urls)
     {
-        log("$ gsutil cp " + url + " " + dest.getFullPathName() + "/");
-        auto result = runCommand({ "gsutil", "cp", url, dest.getFullPathName() + "/" });
-        if (result.exitCode != 0)
-            throw std::runtime_error(humaniseError("gsutil cp", result).toStdString());
-        auto base = url.fromLastOccurrenceOf("/", false, false);
-        out.push_back({ dest.getChildFile(base), url });
+        juce::String bucket;
+        juce::String objectName;
+        juce::String httpUrl;
+
+        if (parseGsUrl(url, bucket, objectName))
+        {
+            httpUrl = makeHttpsUrl(bucket, objectName);
+        }
+        else
+        {
+            httpUrl = url;
+        }
+
+        if (log)
+            log("[http] GET " + httpUrl);
+
+        int statusCode = 0;
+        juce::StringPairArray headers;
+        juce::URL u(httpUrl);
+        auto stream = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+                                              .withConnectionTimeoutMs(15000)
+                                              .withResponseHeaders(&headers)
+                                              .withStatusCode(&statusCode));
+        if (stream == nullptr || statusCode >= 400)
+        {
+            throw std::runtime_error("GCS download failed: HTTP " + std::to_string(statusCode));
+        }
+
+        juce::String base;
+        if (objectName.isNotEmpty())
+            base = objectName.fromLastOccurrenceOf("/", false, false);
+        if (base.isEmpty())
+            base = url.fromLastOccurrenceOf("/", false, false);
+
+        auto local = dest.getChildFile(base);
+        juce::FileOutputStream outStream(local);
+        if (! outStream.openedOk())
+            throw std::runtime_error("Failed to create file: " + local.getFullPathName().toStdString());
+
+        if (outStream.writeFromInputStream(*stream, -1) < 0)
+            throw std::runtime_error("Failed to write file: " + local.getFullPathName().toStdString());
+
+        out.push_back({ local, url });
     }
     return out;
 }
@@ -744,11 +864,19 @@ juce::String stampForFilename(const juce::Time& t)
 
 } // namespace
 
+juce::var SanctSoundClient::fetchGcsJson(const juce::String& bucket,
+                                         const juce::String& prefix,
+                                         const juce::String& delimiter)
+{
+    return fetchGcsJsonInternal(bucket, prefix, delimiter, {});
+}
+
 SanctSoundClient::SanctSoundClient()
 {
     destination = juce::File::getCurrentWorkingDirectory().getChildFile("data/raw");
-    audioPrefix = "gs://noaa-passive-bioacoustic/sanctsound/audio";
-    productsPrefix = "gs://noaa-passive-bioacoustic/sanctsound/products/detections";
+    gcsBucket = "noaa-passive-bioacoustic";
+    audioPrefix = "sanctsound/audio";
+    productsPrefix = "sanctsound/products/detections";
 }
 
 void SanctSoundClient::setDestinationDirectory(const juce::File& directory)
@@ -779,54 +907,99 @@ std::vector<ProductGroup> SanctSoundClient::listProductGroups(const juce::String
                                                               const juce::String& tag,
                                                               LogFn log) const
 {
-    juce::StringArray globs {
-        productsPrefix + "/" + site + "/**/*" + tag + "*.csv",
-        productsPrefix + "/" + site + "/**/*" + tag + "*.nc",
-        productsPrefix + "/" + site + "/**/*" + tag + "*.json"
-    };
+    const juce::String sitePrefix = productsPrefix + "/" + site + "/";
+    const juce::String tagLower = tag.trim().toLowerCase();
+
+    juce::Array<juce::String> pending;
+    juce::StringArray visited;
+    pending.add(sitePrefix);
+    visited.add(sitePrefix);
 
     std::map<juce::String, ProductGroup, std::less<>> groups;
+    bool foundAny = false;
 
-    for (auto& glob : globs)
+    while (pending.size() > 0)
     {
-        log("[ls] " + glob);
-        auto result = runCommand({ "gsutil", "ls", "-r", glob });
-        if (result.exitCode != 0)
+        auto current = pending[0];
+        pending.remove(0);
+
+        if (log)
+            log("[gcs] list " + makeGsUrl(gcsBucket, current));
+
+        juce::String pageToken;
+        do
         {
-            if (isNoMatchesError(result))
+            juce::var response = pageToken.isEmpty()
+                                     ? fetchGcsJson(gcsBucket, current)
+                                     : fetchGcsJsonPage(gcsBucket, current, "/", pageToken);
+
+            auto* obj = response.getDynamicObject();
+            if (obj == nullptr)
+                break;
+
+            auto prefixesVar = obj->getProperty("prefixes");
+            if (auto* prefixArray = prefixesVar.getArray())
             {
-                if (log)
-                    log("  ↳ no matches");
-                continue;
+                for (auto& entry : *prefixArray)
+                {
+                    if (! entry.isString())
+                        continue;
+                    auto subPrefix = entry.toString();
+                    if (! visited.contains(subPrefix))
+                    {
+                        visited.add(subPrefix);
+                        pending.add(subPrefix);
+                    }
+                }
             }
 
-            throw std::runtime_error(humaniseError("gsutil ls", result).toStdString());
-        }
-
-        juce::StringArray lines;
-        lines.addLines(result.output);
-        for (auto& line : lines)
-        {
-            auto url = line.trim();
-            if (! (url.startsWith("gs://") && ! url.endsWithChar('/')))
-                continue;
-            auto prefix = productsPrefix + "/" + site + "/";
-            juce::String groupName;
-            if (url.startsWithIgnoreCase(prefix))
+            auto itemsVar = obj->getProperty("items");
+            if (auto* itemsArray = itemsVar.getArray())
             {
-                auto remainder = url.substring(prefix.length());
-                groupName = remainder.upToFirstOccurrenceOf("/", false, false);
-            }
-            if (groupName.isEmpty())
-                groupName = url.fromLastOccurrenceOf("/", false, false).upToLastOccurrenceOf(".", false, false);
+                for (auto& item : *itemsArray)
+                {
+                    auto* itemObj = item.getDynamicObject();
+                    if (itemObj == nullptr)
+                        continue;
 
-            auto& group = groups[groupName];
-            group.name = groupName;
-            group.paths.add(url);
-            auto ext = url.fromLastOccurrenceOf(".", true, false).toLowerCase();
-            group.extCounts[ext]++;
-        }
+                    auto nameVar = itemObj->getProperty("name");
+                    if (! nameVar.isString())
+                        continue;
+
+                    auto objectName = nameVar.toString();
+                    if (tagLower.isNotEmpty() && ! objectName.toLowerCase().contains(tagLower))
+                        continue;
+                    if (! objectName.endsWithIgnoreCase(".csv"))
+                        continue;
+
+                    juce::String groupName;
+                    if (objectName.startsWith(sitePrefix))
+                    {
+                        auto remainder = objectName.substring(sitePrefix.length());
+                        groupName = remainder.upToFirstOccurrenceOf("/", false, false);
+                    }
+
+                    if (groupName.isEmpty())
+                        groupName = objectName.fromLastOccurrenceOf("/", false, false)
+                                               .upToLastOccurrenceOf(".", false, false);
+
+                    auto& group = groups[groupName];
+                    group.name = groupName;
+                    auto gsUrl = makeGsUrl(gcsBucket, objectName);
+                    group.paths.add(gsUrl);
+                    auto ext = gsUrl.fromLastOccurrenceOf(".", true, false).toLowerCase();
+                    group.extCounts[ext]++;
+                    foundAny = true;
+                }
+            }
+
+            auto nextVar = obj->getProperty("nextPageToken");
+            pageToken = nextVar.isString() ? nextVar.toString() : juce::String();
+        } while (pageToken.isNotEmpty());
     }
+
+    if (! foundAny && log)
+        log("  -> no matches");
 
     std::vector<ProductGroup> out;
     for (auto& kv : groups)
@@ -840,18 +1013,46 @@ MetadataSummary SanctSoundClient::fetchMetadataSummary(const juce::String& site,
                                                        juce::String& rawText,
                                                        LogFn log) const
 {
-    auto pattern = productsPrefix + "/" + site + "/" + group + "/metadata/*.json";
-    auto result = runCommand({ "gsutil", "ls", "-r", pattern });
-    if (result.exitCode != 0)
-        throw std::runtime_error(humaniseError("gsutil ls", result).toStdString());
+    const juce::String metadataPrefix = productsPrefix + "/" + site + "/" + group + "/metadata/";
+
+    if (log)
+        log("[gcs] list " + makeGsUrl(gcsBucket, metadataPrefix));
 
     juce::StringArray urls;
-    for (auto& line : result.lines)
+
+    juce::String pageToken;
+    do
     {
-        auto url = line.trim();
-        if (url.startsWith("gs://") && url.endsWithIgnoreCase(".json"))
-            urls.add(url);
-    }
+        juce::var response = pageToken.isEmpty()
+                                 ? fetchGcsJson(gcsBucket, metadataPrefix)
+                                 : fetchGcsJsonPage(gcsBucket, metadataPrefix, "/", pageToken);
+
+        auto* obj = response.getDynamicObject();
+        if (obj == nullptr)
+            break;
+
+        auto itemsVar = obj->getProperty("items");
+        if (auto* itemsArray = itemsVar.getArray())
+        {
+            for (auto& item : *itemsArray)
+            {
+                auto* itemObj = item.getDynamicObject();
+                if (itemObj == nullptr)
+                    continue;
+                auto nameVar = itemObj->getProperty("name");
+                if (! nameVar.isString())
+                    continue;
+                auto objectName = nameVar.toString();
+                if (! objectName.endsWithIgnoreCase(".json"))
+                    continue;
+                urls.add(makeGsUrl(gcsBucket, objectName));
+            }
+        }
+
+        auto nextVar = obj->getProperty("nextPageToken");
+        pageToken = nextVar.isString() ? nextVar.toString() : juce::String();
+    } while (pageToken.isNotEmpty());
+
     urls.sort(true);
 
     if (urls.isEmpty())
@@ -866,11 +1067,26 @@ MetadataSummary SanctSoundClient::fetchMetadataSummary(const juce::String& site,
     for (int i = 0; i < juce::jmin(2, urls.size()); ++i)
     {
         auto url = urls[i];
-        log("[cat] " + url);
-        auto cat = runCommand({ "gsutil", "cat", url });
-        if (cat.exitCode != 0)
+        juce::String bucket;
+        juce::String objectName;
+        if (! parseGsUrl(url, bucket, objectName))
             continue;
-        auto text = cat.output.trim();
+
+        auto httpUrl = makeHttpsUrl(bucket, objectName);
+        if (log)
+            log("[http] GET " + httpUrl);
+
+        int statusCode = 0;
+        juce::StringPairArray headers;
+        juce::URL u(httpUrl);
+        auto stream = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+                                              .withConnectionTimeoutMs(15000)
+                                              .withResponseHeaders(&headers)
+                                              .withStatusCode(&statusCode));
+        if (stream == nullptr || statusCode >= 400)
+            continue;
+
+        auto text = stream->readEntireStreamAsString().trim();
         snippets.add("// [" + juce::String(i + 1) + "/" + juce::String(urls.size()) + "] " + url + "\n" + text);
         if (parsed.isVoid())
             parsed = parseJson(text);
@@ -953,7 +1169,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         for (auto& r : runs)
         {
             runsText << juce::String(idx++).paddedLeft('0', 2) << ". "
-                     << toIso(r.start) << " → " << toIso(r.end) << "\n";
+                     << toIso(r.start) << " -> " << toIso(r.end) << "\n";
         }
         summaryText = group.name + " | mode: hour";
     }
@@ -991,7 +1207,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         summaryText = group.name + " | mode: event";
     }
 
-    auto audioFiles = listAudioFilesAcross(site, preferredFolder, tmin, tmax, audioPrefix);
+    auto audioFiles = listAudioFilesAcross(site, preferredFolder, tmin, tmax, audioPrefix, gcsBucket);
     juce::StringArray urls;
     juce::StringArray names;
     minimalUnionForWindows(audioFiles, windows, urls, names);
@@ -1258,7 +1474,7 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
                     << "Dir: " << clipsDir.getFullPathName() << "\n";
         summaryFile.replaceWithText(summaryText);
 
-        log("Clips → " + clipsDir.getFullPathName() + " | written " + juce::String(written) + ", skipped " + juce::String(skipped));
+        log("Clips -> " + clipsDir.getFullPathName() + " | written " + juce::String(written) + ", skipped " + juce::String(skipped));
     }
 
     return summary;

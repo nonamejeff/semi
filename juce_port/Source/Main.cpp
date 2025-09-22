@@ -47,7 +47,7 @@ juce::String chooseUIFont()
 
 // NOTE: Your MainComponent is inside namespace `sanctsound`.
 // Either qualify it here, or `using namespace sanctsound;`.
-// We’ll fully qualify to avoid namespace leaks.
+// We'll fully qualify to avoid namespace leaks.
 
 class MainWindow : public juce::DocumentWindow
 {
