@@ -3,6 +3,8 @@
 #include <juce_core/juce_core.h>
 #include <functional>
 #include <map>
+#include <utility>
+#include <vector>
 
 #include "PreviewModels.h"
 
@@ -18,6 +20,17 @@ class SanctSoundClient
 {
 public:
     using LogFn = std::function<void(const juce::String&)>;
+
+    struct AudioListingResult
+    {
+        juce::String prefix;
+        int totalListed = 0;
+        std::vector<juce::String> uniqueObjects;
+        juce::StringArray sampleAll;
+        juce::StringArray sampleKept;
+        juce::StringArray sampleDropped;
+        std::vector<std::pair<juce::String, juce::String>> droppedPairs;
+    };
 
     SanctSoundClient();
 
@@ -40,6 +53,12 @@ public:
                                const ProductGroup& group,
                                bool onlyLongRuns,
                                LogFn log) const;
+
+    AudioListingResult listAudioObjectsForGroup(const juce::String& site,
+                                                const juce::String& groupName,
+                                                LogFn log) const;
+
+    void writeAudioListingDebugFiles(const AudioListingResult& listing) const;
 
     void downloadFiles(const juce::StringArray& urls, LogFn log) const;
 

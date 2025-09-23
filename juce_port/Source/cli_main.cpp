@@ -1,4 +1,5 @@
 #include <juce_core/juce_core.h>
+#include <algorithm>
 #include "SanctSoundClient.h"
 #include "PreviewModels.h"
 #include "Utilities.h"
@@ -12,12 +13,32 @@ int main()
     try
     {
         sanctsound::SanctSoundClient client;
-        // Do a light sanity check that doesn't hit GUI or network-only paths
-        // (Adjust to whatever is safe in Codex)
-        auto labels = client.siteLabels(); // if this is static; otherwise just log
+        auto labels = client.siteLabels();
         Logger::writeToLog("Sites: " + String(labels.size()));
 
-        Logger::writeToLog("OK");
+        const juce::String siteCode = "ci01";
+        const juce::String groupName = "sanctsound_ci01_02_bluewhale";
+
+        auto logFn = [](const juce::String& message)
+        {
+            juce::Logger::writeToLog(message);
+        };
+
+        auto listing = client.listAudioObjectsForGroup(siteCode, groupName, logFn);
+        client.writeAudioListingDebugFiles(listing);
+
+        Logger::writeToLog("Listing prefix: " + listing.prefix);
+        Logger::writeToLog("Total listed=" + String(listing.totalListed)
+                           + ", kept=" + String((int) listing.uniqueObjects.size()));
+
+        Logger::writeToLog("First kept objects:");
+        for (size_t i = 0; i < std::min<size_t>(12, listing.uniqueObjects.size()); ++i)
+        {
+            auto label = juce::String((int) (i + 1)).paddedLeft('0', 2);
+            Logger::writeToLog("  [" + label + "] " + listing.uniqueObjects[i]);
+        }
+
+        Logger::writeToLog("SanctSound CLI parity check complete");
         return 0;
     }
     catch (const std::exception& e)
