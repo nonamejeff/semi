@@ -369,7 +369,12 @@ void MainComponent::buttonClicked(juce::Button* button)
         juce::FileChooser chooser("Choose destination", client.getDestinationDirectory());
         if (chooser.browseForDirectory())
         {
-            client.setDestinationDirectory(chooser.getResult());
+            if (! client.setDestinationDirectory(chooser.getResult()))
+            {
+                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon,
+                    "Folder error", "Cannot use the selected folder. Check permissions.");
+                return;
+            }
             destinationLabel.setText(chooser.getResult().getFullPathName(), juce::dontSendNotification);
         }
     }

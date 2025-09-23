@@ -130,6 +130,32 @@ bool parseGsUrl(const juce::String& url, juce::String& bucketOut, juce::String& 
     return bucketOut.isNotEmpty() && objectOut.isNotEmpty();
 }
 
+static void ensureParentDir(const juce::File& f)
+{
+    auto parent = f.getParentDirectory();
+    if (parent.exists())
+    {
+        if (! parent.isDirectory())
+            throw std::runtime_error("Failed to create directory: " + parent.getFullPathName().toStdString());
+        return;
+    }
+
+    if (! parent.createDirectory())
+        throw std::runtime_error("Failed to create directory: " + parent.getFullPathName().toStdString());
+}
+
+static void writeTextFile(const juce::File& f, const juce::String& text)
+{
+    ensureParentDir(f);
+    juce::FileOutputStream out(f);
+    if (! out.openedOk())
+        throw std::runtime_error("Failed to open file for writing: " + f.getFullPathName().toStdString());
+    out.writeText(text, false, false, "\n");
+    out.flush();
+    if (out.getStatus().failed())
+        throw std::runtime_error("Write failed: " + out.getStatus().getErrorMessage().toStdString());
+}
+
 juce::String siteLabelForCode(const juce::String& code)
 {
     auto c = code.trim().toLowerCase();
@@ -790,7 +816,17 @@ std::vector<DownloadedFile> downloadFilesTo(const juce::StringArray& urls,
                                             SanctSoundClient::LogFn log)
 {
     std::vector<DownloadedFile> out;
-    dest.createDirectory();
+    if (dest.exists())
+    {
+        if (! dest.isDirectory())
+            throw std::runtime_error("Destination exists but is not a directory: "
+                                     + dest.getFullPathName().toStdString());
+    }
+    else if (! dest.createDirectory())
+    {
+        throw std::runtime_error("Failed to create directory: " + dest.getFullPathName().toStdString());
+    }
+
     for (auto& url : urls)
     {
         juce::String bucket;
@@ -828,12 +864,17 @@ std::vector<DownloadedFile> downloadFilesTo(const juce::StringArray& urls,
             base = url.fromLastOccurrenceOf("/", false, false);
 
         auto local = dest.getChildFile(base);
+        ensureParentDir(local);
         juce::FileOutputStream outStream(local);
         if (! outStream.openedOk())
-            throw std::runtime_error("Failed to create file: " + local.getFullPathName().toStdString());
+            throw std::runtime_error("Failed to open file for writing: " + local.getFullPathName().toStdString());
 
         if (outStream.writeFromInputStream(*stream, -1) < 0)
             throw std::runtime_error("Failed to write file: " + local.getFullPathName().toStdString());
+
+        outStream.flush();
+        if (outStream.getStatus().failed())
+            throw std::runtime_error("Write failed: " + outStream.getStatus().getErrorMessage().toStdString());
 
         out.push_back({ local, url });
     }
@@ -875,12 +916,17 @@ juce::String ffmpegCut(const juce::File& source,
 juce::String ffmpegConcat(const juce::File& wav1, const juce::File& wav2, const juce::File& outFile)
 {
     auto temp = juce::File::createTempFile("concat_list.txt");
+    try
     {
-        juce::FileOutputStream out(temp);
-        if (! out.openedOk())
-            return "Failed to create concat list";
-        out.writeText("file '" + wav1.getFullPathName() + "'\n", false, false, nullptr);
-        out.writeText("file '" + wav2.getFullPathName() + "'\n", false, false, nullptr);
+        juce::String text;
+        text << "file '" << wav1.getFullPathName() << "'\n";
+        text << "file '" << wav2.getFullPathName() << "'\n";
+        writeTextFile(temp, text);
+    }
+    catch (const std::runtime_error& e)
+    {
+        temp.deleteFile();
+        return e.what();
     }
     auto result = runCommand({ "ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", temp.getFullPathName(), "-c", "copy", outFile.getFullPathName() });
     temp.deleteFile();
@@ -898,20 +944,38 @@ juce::String stampForFilename(const juce::Time& t)
 
 SanctSoundClient::SanctSoundClient()
 {
-    destination = juce::File::getCurrentWorkingDirectory().getChildFile("data/raw");
+    auto defaultDir = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                          .getChildFile("SanctSound");
+    if (! setDestinationDirectory(defaultDir))
+        throw std::runtime_error("Failed to initialise destination directory: "
+                                 + defaultDir.getFullPathName().toStdString());
+
     gcsBucket = "noaa-passive-bioacoustic";
     audioPrefix = "sanctsound/audio";
     productsPrefix = "sanctsound/products/detections";
 }
 
-void SanctSoundClient::setDestinationDirectory(const juce::File& directory)
+bool SanctSoundClient::setDestinationDirectory(const juce::File& directory)
 {
-    destination = directory;
+    juce::File target = directory;
+    if (target.exists())
+    {
+        if (! target.isDirectory())
+            return false;
+    }
+    else
+    {
+        if (! target.createDirectory())
+            return false;
+    }
+
+    destinationDir = target;
+    return true;
 }
 
-const juce::File& SanctSoundClient::getDestinationDirectory() const noexcept
+const juce::File& SanctSoundClient::getDestinationDirectory() const
 {
-    return destination;
+    return destinationDir;
 }
 
 juce::StringArray SanctSoundClient::siteLabels() const
@@ -1144,7 +1208,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     auto preferredFolder = folderFromSet(group.name);
 
     auto bestFiles = chooseBestFiles(group.paths);
-    auto downloaded = downloadFilesTo(bestFiles, destination, log);
+    auto downloaded = downloadFilesTo(bestFiles, destinationDir, log);
 
     juce::Array<juce::File> localCsvs;
     for (auto& item : downloaded)
@@ -1262,7 +1326,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
 
 void SanctSoundClient::downloadFiles(const juce::StringArray& urls, LogFn log) const
 {
-    downloadFilesTo(urls, destination, log);
+    downloadFilesTo(urls, destinationDir, log);
 }
 
 ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups,
@@ -1279,7 +1343,7 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
         return summary;
 
     juce::Array<LocalAudio> local;
-    for (const auto& entry : juce::RangedDirectoryIterator(destination, false, "*.flac", juce::File::findFiles))
+    for (const auto& entry : juce::RangedDirectoryIterator(destinationDir, false, "*.flac", juce::File::findFiles))
     {
         auto file = entry.getFile();
         if (! selectedBasenames.contains(file.getFileName()))
@@ -1350,8 +1414,17 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
         const auto& preview = itCache->second;
         summary.mode = preview.mode;
 
-        auto clipsDir = destination.getChildFile("clips").getChildFile(grp);
-        clipsDir.createDirectory();
+        auto clipsDir = destinationDir.getChildFile("clips").getChildFile(grp);
+        if (clipsDir.exists())
+        {
+            if (! clipsDir.isDirectory())
+                throw std::runtime_error("Destination exists but is not a directory: "
+                                         + clipsDir.getFullPathName().toStdString());
+        }
+        else if (! clipsDir.createDirectory())
+        {
+            throw std::runtime_error("Failed to create directory: " + clipsDir.getFullPathName().toStdString());
+        }
         summary.directory = clipsDir;
 
         juce::Array<ClipRow> manifest;
@@ -1468,27 +1541,30 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
             juce::StringArray escaped;
             for (auto& f : fields)
                 escaped.add("\"" + f.replace("\"", "\"\"") + "\"");
-            stream.writeText(escaped.joinIntoString(",") + "\n", false, false, nullptr);
+            stream.writeText(escaped.joinIntoString(",") + "\n", false, false, "\n");
         };
 
+        ensureParentDir(manifestFile);
+        juce::FileOutputStream out(manifestFile);
+        if (! out.openedOk())
+            throw std::runtime_error("Failed to open file for writing: " + manifestFile.getFullPathName().toStdString());
+
+        writeCsvLine(out, { "clip_wav", "source_flac(s)", "start_utc", "end_utc", "duration_sec", "mode" });
+        for (auto& row : manifest)
         {
-            juce::FileOutputStream out(manifestFile);
-            if (out.openedOk())
-            {
-                writeCsvLine(out, { "clip_wav", "source_flac(s)", "start_utc", "end_utc", "duration_sec", "mode" });
-                for (auto& row : manifest)
-                {
-                    writeCsvLine(out, {
-                        row.clipName,
-                        row.sourceNames,
-                        row.startIso,
-                        row.endIso,
-                        juce::String(row.durationSeconds, 3),
-                        row.mode
-                    });
-                }
-            }
+            writeCsvLine(out, {
+                row.clipName,
+                row.sourceNames,
+                row.startIso,
+                row.endIso,
+                juce::String(row.durationSeconds, 3),
+                row.mode
+            });
         }
+
+        out.flush();
+        if (out.getStatus().failed())
+            throw std::runtime_error("Write failed: " + out.getStatus().getErrorMessage().toStdString());
 
         auto summaryFile = clipsDir.getChildFile("clips_summary.txt");
         juce::String summaryText;
@@ -1497,7 +1573,7 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
                     << " | Skipped: " << skipped
                     << " | Mode: " << preview.mode << "\n"
                     << "Dir: " << clipsDir.getFullPathName() << "\n";
-        summaryFile.replaceWithText(summaryText);
+        writeTextFile(summaryFile, summaryText);
 
         log("Clips -> " + clipsDir.getFullPathName() + " | written " + juce::String(written) + ", skipped " + juce::String(skipped));
     }
