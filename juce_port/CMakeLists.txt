@@ -33,6 +33,8 @@ if (SANCTSOUND_HEADLESS)
     target_link_libraries(SanctSoundCli PRIVATE
         juce::juce_core
         juce::juce_data_structures
+        juce::juce_audio_basics
+        juce::juce_audio_formats
     )
     find_package(CURL REQUIRED)
     target_link_libraries(SanctSoundCli PRIVATE CURL::libcurl)
@@ -84,6 +86,7 @@ else()
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_utils
+        juce::juce_audio_formats
         juce::juce_dsp
     )
 

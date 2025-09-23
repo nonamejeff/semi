@@ -56,11 +56,13 @@ struct PreviewResult
 struct ClipRow
 {
     juce::String clipName;
+    juce::String writtenPath;
     juce::String sourceNames;
     juce::String startIso;
     juce::String endIso;
     double durationSeconds = 0.0;
     juce::String mode;
+    juce::String status;
 };
 
 struct ClipSummary
