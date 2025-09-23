@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <stdexcept>
+#include <unordered_set>
 #include <vector>
 
 namespace sanctsound
@@ -105,6 +106,63 @@ juce::var fetchGcsJsonFirstPage(const juce::String& bucket,
                                 const juce::String& delimiter = "/")
 {
     return fetchGcsJsonInternal(bucket, prefix, delimiter, {});
+}
+
+static bool hasAudioExt(const juce::String& name)
+{
+    auto lower = name.toLowerCase();
+    return lower.endsWith(".flac") || lower.endsWith(".wav");
+}
+
+static juce::String basenameNoExt(const juce::String& name)
+{
+    auto s = name.fromLastOccurrenceOf("/", false, true);
+    return s.upToLastOccurrenceOf(".", false, false);
+}
+
+static void gcsListRecursive(const juce::String& bucket,
+                             const juce::String& prefix,
+                             juce::StringArray& outObjects)
+{
+    juce::String pageToken;
+    for (;;)
+    {
+        juce::String url = "https://storage.googleapis.com/storage/v1/b/" + bucket
+                           + "/o?prefix=" + juce::URL::addEscapeChars(prefix, true)
+                           + "&delimiter=/";
+        if (pageToken.isNotEmpty())
+            url << "&pageToken=" << juce::URL::addEscapeChars(pageToken, true);
+
+        juce::URL u(url);
+        auto stream = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+                                              .withConnectionTimeoutMs(15000));
+        if (stream == nullptr)
+            throw std::runtime_error("GCS list failed for: " + url.toStdString());
+        auto v = juce::JSON::parse(stream->readEntireStreamAsString());
+        if (v.isVoid() || v.isUndefined())
+            throw std::runtime_error("GCS parse failed for: " + url.toStdString());
+
+        if (auto* obj = v.getProperty("items", juce::var()).getArray())
+        {
+            for (auto& it : *obj)
+            {
+                if (it.hasProperty("name"))
+                    outObjects.addIfNotAlreadyThere(it.getProperty("name", juce::String()));
+            }
+        }
+
+        if (auto* pref = v.getProperty("prefixes", juce::var()).getArray())
+        {
+            for (auto& p : *pref)
+                gcsListRecursive(bucket, p.toString(), outObjects);
+        }
+
+        auto pt = v.getProperty("nextPageToken", juce::var());
+        if (pt.isString() && pt.toString().isNotEmpty())
+            pageToken = pt.toString();
+        else
+            break;
+    }
 }
 
 juce::String makeGsUrl(const juce::String& bucket, const juce::String& objectName)
@@ -621,63 +679,51 @@ juce::Array<AudioReference> listAudioFilesInFolder(const juce::String& site,
                                                    const juce::Time& tmin,
                                                    const juce::Time& tmax,
                                                    const juce::String& audioPrefix,
-                                                   const juce::String& bucket)
+                                                   const juce::String& bucket,
+                                                   juce::StringArray* outObjects = nullptr)
 {
     juce::Array<AudioReference> files;
     auto prefix = audioPrefix + "/" + site + "/" + folder + "/audio/";
 
+    juce::StringArray objects;
+    gcsListRecursive(bucket, prefix, objects);
+    if (outObjects != nullptr)
+        outObjects->addArray(objects);
+
+    std::unordered_set<std::string> seenBases;
+    juce::Array<juce::String> uniqueObjects;
+    uniqueObjects.ensureStorageAllocated(objects.size());
+    for (auto& objectName : objects)
+    {
+        if (! hasAudioExt(objectName))
+            continue;
+
+        auto base = basenameNoExt(objectName).toStdString();
+        if (seenBases.insert(base).second)
+            uniqueObjects.add(objectName);
+    }
+
     juce::Optional<AudioReference> leftCandidate;
 
-    juce::String pageToken;
-    do
+    for (auto& objectName : uniqueObjects)
     {
-        juce::var response = pageToken.isEmpty()
-                                 ? fetchGcsJsonFirstPage(bucket, prefix)
-                                 : fetchGcsJsonPage(bucket, prefix, "/", pageToken);
+        auto url = makeGsUrl(bucket, objectName);
+        auto name = objectName.fromLastOccurrenceOf("/", false, false);
 
-        auto* obj = response.getDynamicObject();
-        if (obj == nullptr)
-            break;
-
-        auto itemsVar = obj->getProperty("items");
-        if (auto* itemsArray = itemsVar.getArray())
+        auto startOpt = parseAudioStartFromName(name);
+        if (! startOpt)
+            continue;
+        auto start = *startOpt;
+        if (tmin.toMilliseconds() != 0 && timeLessThan(start, tmin))
         {
-            for (auto& item : *itemsArray)
-            {
-                auto* itemObj = item.getDynamicObject();
-                if (itemObj == nullptr)
-                    continue;
-
-                auto nameVar = itemObj->getProperty("name");
-                if (! nameVar.isString())
-                    continue;
-
-                auto objectName = nameVar.toString();
-                if (! objectName.endsWithIgnoreCase(".flac"))
-                    continue;
-
-                auto url = makeGsUrl(bucket, objectName);
-                auto name = url.fromLastOccurrenceOf("/", false, false);
-
-                auto startOpt = parseAudioStartFromName(name);
-                if (! startOpt)
-                    continue;
-                auto start = *startOpt;
-                if (tmin.toMilliseconds() != 0 && timeLessThan(start, tmin))
-                {
-                    if (! leftCandidate.hasValue() || timeLessThan(leftCandidate->start, start))
-                        leftCandidate = AudioReference{ url, name, start, {}, folder };
-                    continue;
-                }
-                if (tmax.toMilliseconds() != 0 && timeLessThan(tmax, start))
-                    continue;
-                files.add({ url, name, start, {}, folder });
-            }
+            if (! leftCandidate.hasValue() || timeLessThan(leftCandidate->start, start))
+                leftCandidate = AudioReference{ url, name, start, {}, folder };
+            continue;
         }
-
-        auto nextVar = obj->getProperty("nextPageToken");
-        pageToken = nextVar.isString() ? nextVar.toString() : juce::String();
-    } while (pageToken.isNotEmpty());
+        if (tmax.toMilliseconds() != 0 && timeLessThan(tmax, start))
+            continue;
+        files.add({ url, name, start, {}, folder });
+    }
 
     if (leftCandidate.hasValue())
     {
@@ -715,7 +761,8 @@ juce::Array<AudioReference> listAudioFilesAcross(const juce::String& site,
                                                 const juce::Time& tmin,
                                                 const juce::Time& tmax,
                                                 const juce::String& audioPrefix,
-                                                const juce::String& bucket)
+                                                const juce::String& bucket,
+                                                juce::StringArray* outObjects = nullptr)
 {
     auto basePrefix = audioPrefix + "/" + site + "/";
     juce::StringArray folders;
@@ -760,7 +807,7 @@ juce::Array<AudioReference> listAudioFilesAcross(const juce::String& site,
     juce::Array<AudioReference> all;
     for (auto& folder : ordered)
     {
-        auto files = listAudioFilesInFolder(site, folder, tmin, tmax, audioPrefix, bucket);
+        auto files = listAudioFilesInFolder(site, folder, tmin, tmax, audioPrefix, bucket, outObjects);
         all.addArray(files);
     }
 
@@ -1005,92 +1052,40 @@ std::vector<ProductGroup> SanctSoundClient::listProductGroups(const juce::String
     const juce::String sitePrefix = productsPrefix + "/" + site + "/";
     const juce::String tagLower = tag.trim().toLowerCase();
 
-    juce::Array<juce::String> pending;
-    juce::StringArray visited;
-    pending.add(sitePrefix);
-    visited.add(sitePrefix);
-
     std::map<juce::String, ProductGroup, std::less<>> groups;
     bool foundAny = false;
 
-    while (pending.size() > 0)
+    if (log)
+        log("[gcs] list " + makeGsUrl(gcsBucket, sitePrefix));
+
+    juce::StringArray objects;
+    gcsListRecursive(gcsBucket, sitePrefix, objects);
+
+    for (auto& objectName : objects)
     {
-        auto current = pending[0];
-        pending.remove(0);
+        if (tagLower.isNotEmpty() && ! objectName.toLowerCase().contains(tagLower))
+            continue;
+        if (! objectName.endsWithIgnoreCase(".csv"))
+            continue;
 
-        if (log)
-            log("[gcs] list " + makeGsUrl(gcsBucket, current));
-
-        juce::String pageToken;
-        do
+        juce::String groupName;
+        if (objectName.startsWith(sitePrefix))
         {
-            juce::var response = pageToken.isEmpty()
-                                     ? fetchGcsJsonFirstPage(gcsBucket, current)
-                                     : fetchGcsJsonPage(gcsBucket, current, "/", pageToken);
+            auto remainder = objectName.substring(sitePrefix.length());
+            groupName = remainder.upToFirstOccurrenceOf("/", false, false);
+        }
 
-            auto* obj = response.getDynamicObject();
-            if (obj == nullptr)
-                break;
+        if (groupName.isEmpty())
+            groupName = objectName.fromLastOccurrenceOf("/", false, false)
+                                   .upToLastOccurrenceOf(".", false, false);
 
-            auto prefixesVar = obj->getProperty("prefixes");
-            if (auto* prefixArray = prefixesVar.getArray())
-            {
-                for (auto& entry : *prefixArray)
-                {
-                    if (! entry.isString())
-                        continue;
-                    auto subPrefix = entry.toString();
-                    if (! visited.contains(subPrefix))
-                    {
-                        visited.add(subPrefix);
-                        pending.add(subPrefix);
-                    }
-                }
-            }
-
-            auto itemsVar = obj->getProperty("items");
-            if (auto* itemsArray = itemsVar.getArray())
-            {
-                for (auto& item : *itemsArray)
-                {
-                    auto* itemObj = item.getDynamicObject();
-                    if (itemObj == nullptr)
-                        continue;
-
-                    auto nameVar = itemObj->getProperty("name");
-                    if (! nameVar.isString())
-                        continue;
-
-                    auto objectName = nameVar.toString();
-                    if (tagLower.isNotEmpty() && ! objectName.toLowerCase().contains(tagLower))
-                        continue;
-                    if (! objectName.endsWithIgnoreCase(".csv"))
-                        continue;
-
-                    juce::String groupName;
-                    if (objectName.startsWith(sitePrefix))
-                    {
-                        auto remainder = objectName.substring(sitePrefix.length());
-                        groupName = remainder.upToFirstOccurrenceOf("/", false, false);
-                    }
-
-                    if (groupName.isEmpty())
-                        groupName = objectName.fromLastOccurrenceOf("/", false, false)
-                                               .upToLastOccurrenceOf(".", false, false);
-
-                    auto& group = groups[groupName];
-                    group.name = groupName;
-                    auto gsUrl = makeGsUrl(gcsBucket, objectName);
-                    group.paths.add(gsUrl);
-                    auto ext = gsUrl.fromLastOccurrenceOf(".", true, false).toLowerCase();
-                    group.extCounts[ext]++;
-                    foundAny = true;
-                }
-            }
-
-            auto nextVar = obj->getProperty("nextPageToken");
-            pageToken = nextVar.isString() ? nextVar.toString() : juce::String();
-        } while (pageToken.isNotEmpty());
+        auto& group = groups[groupName];
+        group.name = groupName;
+        auto gsUrl = makeGsUrl(gcsBucket, objectName);
+        group.paths.add(gsUrl);
+        auto ext = gsUrl.fromLastOccurrenceOf(".", true, false).toLowerCase();
+        group.extCounts[ext]++;
+        foundAny = true;
     }
 
     if (! foundAny && log)
@@ -1302,12 +1297,28 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         summaryText = group.name + " | mode: event";
     }
 
-    auto audioFiles = listAudioFilesAcross(site, preferredFolder, tmin, tmax, audioPrefix, gcsBucket);
+    if (log)
+        log("previewGroup: windows=" + juce::String(windows.size())
+            + " (onlyLong=" + juce::String(onlyLongRuns ? "true" : "false") + ")");
+
+    juce::StringArray rawObjectNames;
+    auto audioFiles = listAudioFilesAcross(site, preferredFolder, tmin, tmax, audioPrefix, gcsBucket, &rawObjectNames);
     juce::StringArray urls;
     juce::StringArray names;
     minimalUnionForWindows(audioFiles, windows, urls, names);
 
-    result.summary = summaryText + " | unique files: " + juce::String(names.size());
+    std::unordered_set<std::string> seenBasenames;
+    juce::StringArray uniqueBasenames;
+    for (auto& name : names)
+    {
+        auto base = basenameNoExt(name);
+        if (base.isEmpty())
+            continue;
+        if (seenBasenames.insert(base.toStdString()).second)
+            uniqueBasenames.add(base);
+    }
+
+    result.summary = summaryText + " | unique files: " + juce::String(uniqueBasenames.size());
     result.runsText = runsText;
     result.windows = windows;
     result.urls = urls;
@@ -1326,6 +1337,26 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
             result.files.add(lf);
         }
     }
+
+#if JUCE_DEBUG
+    if (! localCsvs.isEmpty())
+    {
+        auto debugDir = localCsvs[0].getParentDirectory();
+
+        juce::StringArray limitedObjects;
+        for (int i = 0; i < juce::jmin(100, rawObjectNames.size()); ++i)
+            limitedObjects.add(rawObjectNames[i]);
+
+        auto objectsFile = debugDir.getChildFile("preview_objects.txt");
+        auto basenamesFile = debugDir.getChildFile("preview_basenames.txt");
+
+        writeTextFile(objectsFile, limitedObjects.joinIntoString("\n"));
+        writeTextFile(basenamesFile, uniqueBasenames.joinIntoString("\n"));
+    }
+#endif
+#if ! JUCE_DEBUG
+    juce::ignoreUnused(rawObjectNames);
+#endif
 
     return result;
 }
