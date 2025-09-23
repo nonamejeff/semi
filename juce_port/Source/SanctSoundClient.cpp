@@ -16,6 +16,31 @@ namespace sanctsound
 {
 namespace
 {
+juce::var fetchGcsJson(const juce::String& bucket,
+                       const juce::String& prefix,
+                       const juce::String& delimiter = "/")
+{
+    const juce::String url =
+        "https://storage.googleapis.com/storage/v1/b/" + bucket +
+        "/o?prefix=" + juce::URL::addEscapeChars(prefix, true) +
+        "&delimiter=" + juce::URL::addEscapeChars(delimiter, true);
+
+    juce::URL request(url);
+    auto stream = request.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+                                                .withConnectionTimeoutMs(15000));
+
+    if (stream == nullptr)
+        throw std::runtime_error("Failed to fetch GCS JSON: no response stream");
+
+    const juce::String jsonText = stream->readEntireStreamAsString();
+    const juce::var parsed = juce::JSON::parse(jsonText);
+
+    if (parsed.isVoid() || parsed.isUndefined())
+        throw std::runtime_error("Failed to parse GCS JSON response");
+
+    return parsed;
+}
+
 const juce::StringArray kKnownCodes {
     "ci01","ci02","ci03","ci04","ci05",
     "fk01","fk02","fk03","fk04",
