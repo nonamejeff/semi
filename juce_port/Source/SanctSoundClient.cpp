@@ -4,10 +4,13 @@
 
 #include <juce_core/juce_core.h>
 #include <juce_data_structures/juce_data_structures.h>
+#include <juce_audio_basics/juce_audio_basics.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <memory>
 #include <string>
 #include <stdexcept>
 #include <vector>
@@ -205,6 +208,9 @@ struct LocalAudio
     juce::Time start;
     juce::Time end;
     juce::String folder;
+    double sampleRate = 0.0;
+    juce::int64 lengthSamples = 0;
+    int numChannels = 0;
 };
 
 bool timeLessThan(const juce::Time& a, const juce::Time& b)
@@ -1329,6 +1335,7 @@ void SanctSoundClient::downloadFiles(const juce::StringArray& urls, LogFn log) c
     downloadFilesTo(urls, destinationDir, log);
 }
 
+
 ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups,
                                          const std::map<juce::String, PreviewCache>& cache,
                                          const juce::StringArray& selectedBasenames,
@@ -1342,20 +1349,60 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
     if (groups.isEmpty())
         return summary;
 
-    juce::Array<LocalAudio> local;
-    for (const auto& entry : juce::RangedDirectoryIterator(destinationDir, false, "*.flac", juce::File::findFiles))
+    juce::AudioFormatManager formatManager;
+    formatManager.registerBasicFormats();
+
+    struct TrackingFileOutputStream : public juce::FileOutputStream
     {
-        auto file = entry.getFile();
-        if (! selectedBasenames.contains(file.getFileName()))
+        TrackingFileOutputStream(const juce::File& targetFile, juce::Result& statusOut)
+            : juce::FileOutputStream(targetFile), status(statusOut) {}
+
+        ~TrackingFileOutputStream() override
+        {
+            status = getStatus();
+        }
+
+        juce::Result& status;
+    };
+
+    juce::Array<LocalAudio> local;
+
+    for (auto& base : selectedBasenames)
+    {
+        auto src = destinationDir.getChildFile(base);
+        if (! src.existsAsFile())
+        {
+            if (log)
+                log("missing source: " + src.getFullPathName());
             continue;
-        auto startOpt = parseAudioStartFromName(file.getFileName());
+        }
+
+        auto startOpt = parseAudioStartFromName(base);
         if (! startOpt)
+        {
+            if (log)
+                log("[WARN] Unable to parse start time from " + base);
             continue;
+        }
+
+        std::unique_ptr<juce::AudioFormatReader> reader(formatManager.createReaderFor(src));
+        if (reader == nullptr)
+            throw std::runtime_error("Cannot open source audio: " + src.getFullPathName().toStdString());
+        if (reader->sampleRate <= 0.0)
+            throw std::runtime_error("Invalid sample rate in source audio: " + src.getFullPathName().toStdString());
+        if (reader->numChannels <= 0)
+            throw std::runtime_error("Invalid channel count in source audio: " + src.getFullPathName().toStdString());
+
         LocalAudio audio;
-        audio.file = file;
-        audio.name = file.getFileName();
+        audio.file = src;
+        audio.name = base;
         audio.start = *startOpt;
         audio.folder = folderFromSet(audio.name);
+        audio.sampleRate = reader->sampleRate;
+        audio.lengthSamples = (juce::int64) reader->lengthInSamples;
+        audio.numChannels = (int) reader->numChannels;
+        auto durationSeconds = (audio.sampleRate > 0.0) ? (audio.lengthSamples / audio.sampleRate) : 0.0;
+        audio.end = audio.start + juce::RelativeTime::seconds(durationSeconds);
         local.add(audio);
     }
 
@@ -1363,27 +1410,6 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
     {
         return timeLessThan(a.start, b.start);
     });
-
-    for (int i = 0; i < local.size(); ++i)
-    {
-        if (i + 1 < local.size())
-        {
-            auto end = local[i + 1].start;
-            if (! timeLessThan(local[i].start, end))
-                end = local[i].start + juce::RelativeTime::seconds(1);
-            local.getReference(i).end = end;
-        }
-        else
-        {
-            double seconds = 3600.0;
-            auto err = ffprobeDuration(local[i].file, seconds);
-            if (! err.isEmpty())
-                log("[WARN] " + err);
-            if (seconds <= 1.0)
-                seconds = 3600.0;
-            local.getReference(i).end = local[i].start + juce::RelativeTime::seconds(seconds);
-        }
-    }
 
     auto coverAndNext = [&](const juce::Time& ts) -> std::pair<LocalAudio*, LocalAudio*>
     {
@@ -1402,30 +1428,44 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
         return { current, next };
     };
 
+    auto clipsRoot = destinationDir.getChildFile("clips");
+    if (! clipsRoot.exists())
+    {
+        if (! clipsRoot.createDirectory())
+            throw std::runtime_error("Failed to create directory: " + clipsRoot.getFullPathName().toStdString());
+    }
+    else if (! clipsRoot.isDirectory())
+    {
+        throw std::runtime_error("Destination exists but is not a directory: "
+                                 + clipsRoot.getFullPathName().toStdString());
+    }
+
     for (auto& grp : groups)
     {
         auto itCache = cache.find(grp);
         if (itCache == cache.end())
         {
-            log("[WARN] No preview cache for " + grp);
+            if (log)
+                log("[WARN] No preview cache for " + grp);
             continue;
         }
 
         const auto& preview = itCache->second;
         summary.mode = preview.mode;
 
-        auto clipsDir = destinationDir.getChildFile("clips").getChildFile(grp);
-        if (clipsDir.exists())
+        auto outDir = clipsRoot.getChildFile(grp);
+        if (outDir.exists())
         {
-            if (! clipsDir.isDirectory())
+            if (! outDir.isDirectory())
                 throw std::runtime_error("Destination exists but is not a directory: "
-                                         + clipsDir.getFullPathName().toStdString());
+                                         + outDir.getFullPathName().toStdString());
         }
-        else if (! clipsDir.createDirectory())
+        else if (! outDir.createDirectory())
         {
-            throw std::runtime_error("Failed to create directory: " + clipsDir.getFullPathName().toStdString());
+            throw std::runtime_error("Failed to create directory: " + outDir.getFullPathName().toStdString());
         }
-        summary.directory = clipsDir;
+
+        summary.directory = outDir;
 
         juce::Array<ClipRow> manifest;
         int written = 0;
@@ -1433,109 +1473,303 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
 
         for (auto& window : preview.windows)
         {
-            summary.totalWindows++;
-            auto [current, next] = coverAndNext(window.start);
-            if (current == nullptr)
-            {
-                skipped++;
-                continue;
-            }
-
-            bool needTwo = timeLessThan(current->end, window.end);
-            if (! needTwo)
-            {
-                if (! selectedBasenames.contains(current->name))
-                {
-                    skipped++;
-                    continue;
-                }
-            }
-            else
-            {
-                if (next == nullptr || ! selectedBasenames.contains(current->name) || ! selectedBasenames.contains(next->name))
-                {
-                    skipped++;
-                    continue;
-                }
-            }
-
-            auto clipName = current->name.upToLastOccurrenceOf(".", false, false)
-                              + "__" + stampForFilename(window.start)
-                              + "_" + stampForFilename(window.end) + ".wav";
-            auto outFile = clipsDir.getChildFile(clipName);
-
-            auto durationSeconds = (window.end - window.start).inSeconds();
-            if (durationSeconds <= 0)
-            {
-                skipped++;
-                continue;
-            }
-
-            juce::String err;
-            if (! needTwo)
-            {
-                auto startOffset = (window.start - current->start).inSeconds();
-                err = ffmpegCut(current->file, startOffset, durationSeconds, outFile, clipSampleRate, clipMono, clipSampleFormat);
-            }
-            else
-            {
-                auto startOffset = (window.start - current->start).inSeconds();
-                auto partASeconds = (current->end - window.start).inSeconds();
-                auto partBSeconds = (window.end - next->start).inSeconds();
-                if (partASeconds <= 0 || partBSeconds <= 0)
-                {
-                    skipped++;
-                    continue;
-                }
-                auto tempA = juce::File::createTempFile("clipA.wav");
-                auto tempB = juce::File::createTempFile("clipB.wav");
-                auto errA = ffmpegCut(current->file, startOffset, partASeconds, tempA, clipSampleRate, clipMono, clipSampleFormat);
-                auto errB = ffmpegCut(next->file, 0.0, partBSeconds, tempB, clipSampleRate, clipMono, clipSampleFormat);
-                if (errA.isNotEmpty() || errB.isNotEmpty())
-                {
-                    if (errA.isNotEmpty()) log("[WARN] " + errA);
-                    if (errB.isNotEmpty()) log("[WARN] " + errB);
-                    tempA.deleteFile();
-                    tempB.deleteFile();
-                    skipped++;
-                    continue;
-                }
-                err = ffmpegConcat(tempA, tempB, outFile);
-                tempA.deleteFile();
-                tempB.deleteFile();
-            }
-
-            if (err.isNotEmpty())
-            {
-                log("[WARN] " + err);
-                outFile.deleteFile();
-                skipped++;
-                continue;
-            }
-
-            if (outFile.getSize() < 10000)
-            {
-                outFile.deleteFile();
-                skipped++;
-                continue;
-            }
-
             ClipRow row;
-            row.clipName = outFile.getFileName();
-            row.sourceNames = needTwo ? current->name + " + " + next->name : current->name;
             row.startIso = window.start.toISO8601(true);
             row.endIso = window.end.toISO8601(true);
-            row.durationSeconds = durationSeconds;
             row.mode = preview.mode;
-            manifest.add(row);
-            written++;
+            row.durationSeconds = (window.end - window.start).inSeconds();
+
+            summary.totalWindows++;
+
+            auto [current, next] = coverAndNext(window.start);
+
+            juce::StringArray sources;
+            if (current != nullptr)
+                sources.add(current->name);
+
+            if (current == nullptr)
+            {
+                row.status = "missing_source";
+                row.sourceNames = sources.joinIntoString(" + ");
+                manifest.add(row);
+                skipped++;
+                continue;
+            }
+
+            auto clipDurationSeconds = row.durationSeconds;
+            if (clipDurationSeconds <= 0.0)
+            {
+                row.status = "nonpositive_window";
+                row.sourceNames = sources.joinIntoString(" + ");
+                manifest.add(row);
+                skipped++;
+                continue;
+            }
+
+            if (! current->file.existsAsFile())
+            {
+                if (log)
+                    log("missing source: " + current->file.getFullPathName());
+                row.status = "missing_source";
+                row.sourceNames = sources.joinIntoString(" + ");
+                manifest.add(row);
+                skipped++;
+                continue;
+            }
+
+            std::unique_ptr<juce::AudioFormatReader> readerCurrent(formatManager.createReaderFor(current->file));
+            if (readerCurrent == nullptr)
+                throw std::runtime_error("Cannot open source audio: " + current->file.getFullPathName().toStdString());
+            if (readerCurrent->sampleRate <= 0.0)
+                throw std::runtime_error("Invalid sample rate in source audio: " + current->file.getFullPathName().toStdString());
+            if (readerCurrent->numChannels <= 0)
+                throw std::runtime_error("Invalid channel count in source audio: " + current->file.getFullPathName().toStdString());
+
+            const double sampleRate = readerCurrent->sampleRate;
+            const int numChannels = (int) readerCurrent->numChannels;
+
+            double startOffsetSeconds = (window.start - current->start).inSeconds();
+            if (startOffsetSeconds < 0.0)
+                startOffsetSeconds = 0.0;
+
+            const juce::int64 startSample = (juce::int64) juce::roundToIntAccurate(startOffsetSeconds * sampleRate);
+            const juce::int64 totalSamplesDesired = (juce::int64) juce::roundToIntAccurate(clipDurationSeconds * sampleRate);
+            if (totalSamplesDesired <= 0)
+            {
+                row.status = "too_short";
+                row.sourceNames = sources.joinIntoString(" + ");
+                manifest.add(row);
+                skipped++;
+                continue;
+            }
+
+            const juce::int64 availableCurrent = (juce::int64) readerCurrent->lengthInSamples - startSample;
+            if (availableCurrent <= 0)
+            {
+                row.status = "start_oob";
+                row.sourceNames = sources.joinIntoString(" + ");
+                manifest.add(row);
+                skipped++;
+                continue;
+            }
+
+            double availableCurrentSeconds = (double) availableCurrent / sampleRate;
+            double partASeconds = juce::jmin(clipDurationSeconds, availableCurrentSeconds);
+            if (! timeLessThan(current->end, window.end) && partASeconds < clipDurationSeconds)
+                partASeconds = clipDurationSeconds;
+            if (partASeconds < 0.0)
+                partASeconds = 0.0;
+
+            juce::int64 samplesFromCurrent = (juce::int64) juce::roundToIntAccurate(partASeconds * sampleRate);
+            if (samplesFromCurrent > availableCurrent)
+                samplesFromCurrent = availableCurrent;
+            if (samplesFromCurrent <= 0)
+            {
+                row.status = "no_audio";
+                row.sourceNames = sources.joinIntoString(" + ");
+                manifest.add(row);
+                skipped++;
+                continue;
+            }
+
+            juce::int64 samplesFromNext = 0;
+            juce::int64 startSampleNext = 0;
+            std::unique_ptr<juce::AudioFormatReader> readerNext;
+            bool extendsPastCurrent = timeLessThan(current->end, window.end);
+
+            if (extendsPastCurrent)
+            {
+                if (next == nullptr)
+                {
+                    row.status = "missing_source";
+                    row.sourceNames = sources.joinIntoString(" + ");
+                    manifest.add(row);
+                    skipped++;
+                    continue;
+                }
+
+                if (! next->file.existsAsFile())
+                {
+                    if (log)
+                        log("missing source: " + next->file.getFullPathName());
+                    sources.add(next->name);
+                    row.status = "missing_source";
+                    row.sourceNames = sources.joinIntoString(" + ");
+                    manifest.add(row);
+                    skipped++;
+                    continue;
+                }
+
+                readerNext.reset(formatManager.createReaderFor(next->file));
+                if (readerNext == nullptr)
+                    throw std::runtime_error("Cannot open source audio: " + next->file.getFullPathName().toStdString());
+                if (readerNext->sampleRate != sampleRate)
+                    throw std::runtime_error("Sample rate mismatch for: " + next->file.getFullPathName().toStdString());
+                if ((int) readerNext->numChannels != numChannels)
+                    throw std::runtime_error("Channel count mismatch for: " + next->file.getFullPathName().toStdString());
+
+                sources.add(next->name);
+
+                if (timeLessThan(next->end, window.end))
+                {
+                    row.status = "missing_source";
+                    row.sourceNames = sources.joinIntoString(" + ");
+                    manifest.add(row);
+                    skipped++;
+                    continue;
+                }
+
+                double nextStartOffsetSeconds = (window.start - next->start).inSeconds();
+                if (nextStartOffsetSeconds < 0.0)
+                    nextStartOffsetSeconds = 0.0;
+
+                startSampleNext = (juce::int64) juce::roundToIntAccurate(nextStartOffsetSeconds * sampleRate);
+                const juce::int64 availableNext = (juce::int64) readerNext->lengthInSamples - startSampleNext;
+                if (availableNext <= 0)
+                {
+                    row.status = "missing_source";
+                    row.sourceNames = sources.joinIntoString(" + ");
+                    manifest.add(row);
+                    skipped++;
+                    continue;
+                }
+
+                double partBSeconds = clipDurationSeconds - ((double) samplesFromCurrent / sampleRate);
+                if (partBSeconds < 0.0)
+                    partBSeconds = 0.0;
+
+                samplesFromNext = (juce::int64) juce::roundToIntAccurate(partBSeconds * sampleRate);
+                if (samplesFromNext > availableNext)
+                    samplesFromNext = availableNext;
+
+                if (samplesFromNext <= 0)
+                {
+                    row.status = "missing_source";
+                    row.sourceNames = sources.joinIntoString(" + ");
+                    manifest.add(row);
+                    skipped++;
+                    continue;
+                }
+
+                if (samplesFromCurrent + samplesFromNext < totalSamplesDesired)
+                {
+                    row.status = "missing_source";
+                    row.sourceNames = sources.joinIntoString(" + ");
+                    manifest.add(row);
+                    skipped++;
+                    continue;
+                }
+            }
+
+            const juce::int64 totalSamples = samplesFromCurrent + samplesFromNext;
+            if (totalSamples <= 0)
+            {
+                row.status = "too_short";
+                row.sourceNames = sources.joinIntoString(" + ");
+                manifest.add(row);
+                skipped++;
+                continue;
+            }
+
+            const double actualDurationSeconds = (double) totalSamples / sampleRate;
+            auto clipFileName = juce::File::createLegalFileName(current->name + "_" + juce::String((int) juce::roundToIntAccurate(startOffsetSeconds))
+                                                                + "s_" + juce::String((int) juce::roundToIntAccurate(startOffsetSeconds + actualDurationSeconds)) + "s.wav");
+            auto outFile = outDir.getChildFile(clipFileName);
+
+            juce::Result streamStatus = juce::Result::ok();
+            std::unique_ptr<juce::OutputStream> outputStream = std::make_unique<TrackingFileOutputStream>(outFile, streamStatus);
+            auto* trackingStream = static_cast<TrackingFileOutputStream*>(outputStream.get());
+            if (trackingStream == nullptr || ! trackingStream->openedOk())
+                throw std::runtime_error("Cannot create: " + outFile.getFullPathName().toStdString());
+
+            juce::WavAudioFormat wav;
+            auto writer = wav.createWriterFor(outputStream,
+                                              juce::AudioFormatWriter::Options{}
+                                                  .withSampleRate(sampleRate)
+                                                  .withNumChannels(numChannels)
+                                                  .withBitsPerSample(16));
+
+            if (writer == nullptr)
+                throw std::runtime_error("Cannot open writer for: " + outFile.getFullPathName().toStdString());
+
+            juce::int64 largestSegment = samplesFromCurrent > samplesFromNext ? samplesFromCurrent : samplesFromNext;
+            if (largestSegment <= 0)
+                largestSegment = totalSamples;
+            if (largestSegment <= 0)
+                largestSegment = 1;
+
+            const int chunkSize = (int) std::min<juce::int64>(largestSegment, (juce::int64) 1 << 18);
+            juce::AudioBuffer<float> buffer(numChannels, chunkSize);
+
+            auto writeSegment = [&](juce::AudioFormatReader& reader, juce::int64 start, juce::int64 numSamplesToWrite)
+            {
+                juce::int64 remaining = numSamplesToWrite;
+                juce::int64 pos = start;
+
+                while (remaining > 0)
+                {
+                    const int toRead = (int) std::min<juce::int64>(buffer.getNumSamples(), remaining);
+                    if (! reader.read(&buffer, 0, toRead, pos, true, true))
+                        throw std::runtime_error("Read failed at sample " + std::to_string((long long) pos));
+                    if (! writer->writeFromAudioSampleBuffer(buffer, 0, toRead))
+                        throw std::runtime_error("Write failed: " + outFile.getFullPathName().toStdString());
+                    pos += toRead;
+                    remaining -= toRead;
+                }
+            };
+
+            juce::String sourceNamesStr = sources.joinIntoString(" + ");
+
+            try
+            {
+                writeSegment(*readerCurrent, startSample, samplesFromCurrent);
+
+                if (samplesFromNext > 0 && readerNext != nullptr)
+                    writeSegment(*readerNext, startSampleNext, samplesFromNext);
+
+                if (! writer->flush())
+                    throw std::runtime_error("Flush failed: " + outFile.getFullPathName().toStdString());
+
+                writer.reset();
+
+                if (streamStatus.failed())
+                    throw std::runtime_error("Flush failed: " + streamStatus.getErrorMessage().toStdString());
+
+                row.clipName = outFile.getFileName();
+                row.writtenPath = outFile.getFullPathName();
+                row.status = "written";
+                row.sourceNames = sourceNamesStr;
+                row.durationSeconds = actualDurationSeconds;
+                manifest.add(row);
+                written++;
+            }
+            catch (const std::exception& e)
+            {
+                writer.reset();
+                outFile.deleteFile();
+
+                juce::String message = e.what();
+                if (message.startsWithIgnoreCase("Read failed"))
+                    row.status = "read_fail";
+                else if (message.startsWithIgnoreCase("Write failed"))
+                    row.status = "write_fail";
+                else if (message.startsWithIgnoreCase("Flush failed"))
+                    row.status = "flush_fail";
+                else
+                    row.status = "error";
+
+                row.sourceNames = sourceNamesStr;
+                row.writtenPath = outFile.getFullPathName();
+                manifest.add(row);
+                throw;
+            }
         }
 
         summary.written += written;
         summary.skipped += skipped;
         summary.manifestRows.addArray(manifest);
 
-        auto manifestFile = clipsDir.getChildFile("clips_manifest.csv");
+        auto manifestFile = outDir.getChildFile("clips_manifest.csv");
         auto writeCsvLine = [](juce::FileOutputStream& stream, const juce::StringArray& fields)
         {
             juce::StringArray escaped;
@@ -1549,7 +1783,7 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
         if (! out.openedOk())
             throw std::runtime_error("Failed to open file for writing: " + manifestFile.getFullPathName().toStdString());
 
-        writeCsvLine(out, { "clip_wav", "source_flac(s)", "start_utc", "end_utc", "duration_sec", "mode" });
+        writeCsvLine(out, { "clip_wav", "source_flac(s)", "start_utc", "end_utc", "duration_sec", "mode", "status", "written_path" });
         for (auto& row : manifest)
         {
             writeCsvLine(out, {
@@ -1558,7 +1792,9 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
                 row.startIso,
                 row.endIso,
                 juce::String(row.durationSeconds, 3),
-                row.mode
+                row.mode,
+                row.status,
+                row.writtenPath
             });
         }
 
@@ -1566,19 +1802,24 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
         if (out.getStatus().failed())
             throw std::runtime_error("Write failed: " + out.getStatus().getErrorMessage().toStdString());
 
-        auto summaryFile = clipsDir.getChildFile("clips_summary.txt");
+        auto summaryFile = outDir.getChildFile("clips_summary.txt");
         juce::String summaryText;
         summaryText << "Windows: " << preview.windows.size()
-                    << " | Clips: " << manifest.size()
+                    << " | Clips: " << written
                     << " | Skipped: " << skipped
                     << " | Mode: " << preview.mode << "\n"
-                    << "Dir: " << clipsDir.getFullPathName() << "\n";
+                    << "Dir: " << outDir.getFullPathName() << "\n";
         writeTextFile(summaryFile, summaryText);
 
-        log("Clips -> " + clipsDir.getFullPathName() + " | written " + juce::String(written) + ", skipped " + juce::String(skipped));
+        if (log)
+            log("Clips -> " + outDir.getFullPathName() + " | written " + juce::String(written) + ", skipped " + juce::String(skipped));
     }
+
+    if (summary.written == 0)
+        throw std::runtime_error("Clip produced no audio files; check source paths and windows.");
 
     return summary;
 }
+
 
 } // namespace sanctsound

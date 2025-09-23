@@ -564,19 +564,38 @@ void MainComponent::handleClip()
             juce::MessageManager::callAsync([this, summary]()
             {
                 clipButton.setEnabled(true);
+
+                const bool anyWritten = (summary.written > 0);
+                const auto title = anyWritten ? juce::String("Clip complete")
+                                              : juce::String("No clips written");
+                const auto message = anyWritten
+                    ? juce::String("Clips written to: ") + summary.directory.getFullPathName()
+                    : juce::String("Clip completed but no audio files were written. See log.");
+
                 juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
-                                                       "Clip complete",
-                                                       "Clips written to: " + summary.directory.getFullPathName());
-                setStatus("Clip complete");
+                                                       title,
+                                                       message);
+                setStatus(anyWritten ? juce::String("Clip complete")
+                                     : juce::String("No clips written"));
             });
         }
         catch (const std::exception& e)
         {
             juce::MessageManager::callAsync([this, msg = juce::String(e.what())]()
             {
-                juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Clip failed", msg);
+                if (msg == "Clip produced no audio files; check source paths and windows.")
+                {
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::InfoIcon,
+                                                           "No clips written",
+                                                           "Clip completed but no audio files were written. See log.");
+                    setStatus("No clips written");
+                }
+                else
+                {
+                    juce::AlertWindow::showMessageBoxAsync(juce::AlertWindow::WarningIcon, "Clip failed", msg);
+                    setStatus("Clip failed");
+                }
                 clipButton.setEnabled(true);
-                setStatus("Clip failed");
             });
         }
     });
