@@ -76,6 +76,38 @@ public:
                            LogFn log) const;
 
 private:
+    struct HourRow
+    {
+        juce::String url;
+        juce::String fname;
+        juce::Time start;
+        juce::Time end;
+        juce::String folder;
+    };
+
+    static bool parseTimeUTC(const juce::String& text, juce::Time& out);
+    static juce::Optional<juce::Time> parseAudioStartFromName(const juce::String& name);
+    static juce::String folderFromSet(const juce::String& setName);
+    static std::vector<HourRow> buildHoursFromRows(std::vector<HourRow> rows);
+    static std::pair<juce::StringArray, juce::StringArray> minimalUnionForWindows(const std::vector<HourRow>& files,
+                                                                                 const std::vector<std::pair<juce::Time, juce::Time>>& windows,
+                                                                                 juce::StringArray& mappingRows);
+
+    std::vector<std::pair<juce::Time, juce::Time>> parseEventsFromCsv(const juce::File& localCsv) const;
+    std::vector<juce::Time> parsePresenceHoursFromCsv(const juce::File& localCsv) const;
+    std::vector<juce::Time> parsePresenceDaysFromCsv(const juce::File& localCsv) const;
+    std::vector<juce::String> listSiteDeployments(const juce::String& site, LogFn log) const;
+    std::vector<HourRow> listAudioFilesInFolder(const juce::String& site,
+                                                const juce::String& folder,
+                                                const juce::Time& tmin,
+                                                const juce::Time& tmax,
+                                                LogFn log) const;
+    std::vector<HourRow> listAudioFilesAcross(const juce::String& site,
+                                              const juce::String& preferredFolder,
+                                              const juce::Time& tmin,
+                                              const juce::Time& tmax,
+                                              LogFn log) const;
+
     juce::File destinationDir;
 
     juce::String gcsBucket;
@@ -85,6 +117,7 @@ private:
     int clipSampleRate = 48000;
     bool clipMono = true;
     juce::String clipSampleFormat = "s16";
+    int clipMinBytes = 10000;
 
     juce::File offlineDataRoot;
     bool offlineEnabled = false;
