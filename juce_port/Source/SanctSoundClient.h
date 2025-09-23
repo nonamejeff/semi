@@ -21,8 +21,8 @@ public:
 
     SanctSoundClient();
 
-    void setDestinationDirectory(const juce::File& directory);
-    const juce::File& getDestinationDirectory() const noexcept;
+    bool setDestinationDirectory(const juce::File& directory);
+    const juce::File& getDestinationDirectory() const;
 
     juce::StringArray siteLabels() const;
     juce::String codeForLabel(const juce::String& label) const;
@@ -49,7 +49,7 @@ public:
                            LogFn log) const;
 
 private:
-    juce::File destination;
+    juce::File destinationDir;
 
     juce::String gcsBucket;
     juce::String audioPrefix;
