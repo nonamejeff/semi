@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <stdexcept>
+#include <utility>
 #include <unordered_set>
 #include <vector>
 
@@ -110,20 +111,24 @@ juce::var fetchGcsJsonFirstPage(const juce::String& bucket,
 
 static bool hasAudioExt(const juce::String& name)
 {
-    auto lower = name.toLowerCase();
-    return lower.endsWith(".flac") || lower.endsWith(".wav");
+    auto s = name.toLowerCase();
+    return s.endsWith(".flac") || s.endsWith(".wav");
 }
 
-static juce::String basenameNoExt(const juce::String& name)
+static juce::String normalizeObjectKey(const juce::String& name)
 {
-    auto s = name.fromLastOccurrenceOf("/", false, true);
-    return s.upToLastOccurrenceOf(".", false, false);
+    return name.toLowerCase().removeCharacters("\r\n");
 }
 
 static void gcsListRecursive(const juce::String& bucket,
                              const juce::String& prefix,
-                             juce::StringArray& outObjects)
+                             juce::StringArray& outObjects,
+                             std::unordered_set<std::string>& visited)
 {
+    const auto key = prefix.toStdString();
+    if (! visited.insert(key).second)
+        return;
+
     juce::String pageToken;
     for (;;)
     {
@@ -137,24 +142,24 @@ static void gcsListRecursive(const juce::String& bucket,
         auto stream = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
                                               .withConnectionTimeoutMs(15000));
         if (stream == nullptr)
-            throw std::runtime_error("GCS list failed for: " + url.toStdString());
+            throw std::runtime_error("GCS list failed: " + url.toStdString());
         auto v = juce::JSON::parse(stream->readEntireStreamAsString());
         if (v.isVoid() || v.isUndefined())
-            throw std::runtime_error("GCS parse failed for: " + url.toStdString());
+            throw std::runtime_error("GCS parse failed: " + url.toStdString());
 
-        if (auto* obj = v.getProperty("items", juce::var()).getArray())
+        if (auto* items = v.getProperty("items", juce::var()).getArray())
         {
-            for (auto& it : *obj)
+            for (auto& it : *items)
             {
                 if (it.hasProperty("name"))
-                    outObjects.addIfNotAlreadyThere(it.getProperty("name", juce::String()));
+                    outObjects.add(it.getProperty("name", juce::String()));
             }
         }
 
-        if (auto* pref = v.getProperty("prefixes", juce::var()).getArray())
+        if (auto* prefs = v.getProperty("prefixes", juce::var()).getArray())
         {
-            for (auto& p : *pref)
-                gcsListRecursive(bucket, p.toString(), outObjects);
+            for (auto& p : *prefs)
+                gcsListRecursive(bucket, p.toString(), outObjects, visited);
         }
 
         auto pt = v.getProperty("nextPageToken", juce::var());
@@ -686,21 +691,22 @@ juce::Array<AudioReference> listAudioFilesInFolder(const juce::String& site,
     auto prefix = audioPrefix + "/" + site + "/" + folder + "/audio/";
 
     juce::StringArray objects;
-    gcsListRecursive(bucket, prefix, objects);
+    std::unordered_set<std::string> visited;
+    gcsListRecursive(bucket, prefix, objects, visited);
     if (outObjects != nullptr)
         outObjects->addArray(objects);
 
-    std::unordered_set<std::string> seenBases;
-    juce::Array<juce::String> uniqueObjects;
-    uniqueObjects.ensureStorageAllocated(objects.size());
+    std::vector<juce::String> uniqueObjects;
+    uniqueObjects.reserve((size_t) objects.size());
+    std::unordered_set<std::string> seenObjects;
     for (auto& objectName : objects)
     {
         if (! hasAudioExt(objectName))
             continue;
 
-        auto base = basenameNoExt(objectName).toStdString();
-        if (seenBases.insert(base).second)
-            uniqueObjects.add(objectName);
+        auto key = normalizeObjectKey(objectName).toStdString();
+        if (seenObjects.insert(key).second)
+            uniqueObjects.push_back(objectName);
     }
 
     juce::Optional<AudioReference> leftCandidate;
@@ -1059,7 +1065,8 @@ std::vector<ProductGroup> SanctSoundClient::listProductGroups(const juce::String
         log("[gcs] list " + makeGsUrl(gcsBucket, sitePrefix));
 
     juce::StringArray objects;
-    gcsListRecursive(gcsBucket, sitePrefix, objects);
+    std::unordered_set<std::string> visited;
+    gcsListRecursive(gcsBucket, sitePrefix, objects, visited);
 
     for (auto& objectName : objects)
     {
@@ -1220,6 +1227,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         throw std::runtime_error("Preview expects at least one CSV artifact");
 
     juce::Array<PreviewWindow> windows;
+    juce::Array<PreviewWindow> rawWindows;
     juce::String runsText;
     juce::String summaryText;
     juce::Time tmin;
@@ -1234,6 +1242,10 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         std::sort(hours.begin(), hours.end(), [](auto& a, auto& b) { return timeLessThan(a, b); });
 
         auto runs = groupConsecutive(hours, juce::RelativeTime::hours(1));
+        rawWindows = juce::Array<PreviewWindow>();
+        for (auto& h : hours)
+            rawWindows.add({ h, h + juce::RelativeTime::hours(1) });
+
         if (onlyLongRuns)
         {
             juce::Array<PreviewWindow> filtered;
@@ -1271,9 +1283,14 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         removeDuplicateTimesInPlace(days);
         std::sort(days.begin(), days.end(), [](auto& a, auto& b) { return timeLessThan(a, b); });
 
+        rawWindows = juce::Array<PreviewWindow>();
         windows = juce::Array<PreviewWindow>();
         for (auto& d : days)
-            windows.add({ d, d + juce::RelativeTime::days(1) });
+        {
+            PreviewWindow w { d, d + juce::RelativeTime::days(1) };
+            rawWindows.add(w);
+            windows.add(w);
+        }
         if (! days.isEmpty())
         {
             tmin = days.getFirst();
@@ -1284,9 +1301,10 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     }
     else
     {
-        windows = juce::Array<PreviewWindow>();
+        rawWindows = juce::Array<PreviewWindow>();
         for (auto& csv : localCsvs)
-            windows.addArray(parseEventsFromCsv(csv));
+            rawWindows.addArray(parseEventsFromCsv(csv));
+        windows = rawWindows;
         std::sort(windows.begin(), windows.end(), [](auto& a, auto& b) { return timeLessThan(a.start, b.start); });
         if (! windows.isEmpty())
         {
@@ -1298,27 +1316,97 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     }
 
     if (log)
+    {
+        log("windows(before filters) = " + juce::String(rawWindows.size())
+            + ", windows(after filters) = " + juce::String(windows.size()));
         log("previewGroup: windows=" + juce::String(windows.size())
             + " (onlyLong=" + juce::String(onlyLongRuns ? "true" : "false") + ")");
+    }
 
-    juce::StringArray rawObjectNames;
-    auto audioFiles = listAudioFilesAcross(site, preferredFolder, tmin, tmax, audioPrefix, gcsBucket, &rawObjectNames);
+    auto audioFiles = listAudioFilesAcross(site, preferredFolder, tmin, tmax, audioPrefix, gcsBucket);
     juce::StringArray urls;
     juce::StringArray names;
     minimalUnionForWindows(audioFiles, windows, urls, names);
 
-    std::unordered_set<std::string> seenBasenames;
-    juce::StringArray uniqueBasenames;
-    for (auto& name : names)
+    std::vector<juce::String> objects;
+    objects.reserve((size_t) urls.size());
+    for (auto& url : urls)
     {
-        auto base = basenameNoExt(name);
-        if (base.isEmpty())
-            continue;
-        if (seenBasenames.insert(base.toStdString()).second)
-            uniqueBasenames.add(base);
+        juce::String bucketName;
+        juce::String objectName;
+        if (parseGsUrl(url, bucketName, objectName))
+        {
+            if (! hasAudioExt(objectName))
+                continue;
+            objects.push_back(objectName);
+        }
+        else
+        {
+            if (! hasAudioExt(url))
+                continue;
+            objects.push_back(url);
+        }
     }
 
-    result.summary = summaryText + " | unique files: " + juce::String(uniqueBasenames.size());
+    std::sort(objects.begin(), objects.end(), [](const juce::String& a, const juce::String& b)
+    {
+        return a.compareIgnoreCase(b) < 0;
+    });
+
+    juce::StringArray first20All;
+    for (int i = 0; i < juce::jmin<int>(20, (int) objects.size()); ++i)
+        first20All.add(objects[(size_t) i]);
+
+    std::vector<juce::String> uniqueObjects;
+    uniqueObjects.reserve(objects.size());
+    std::unordered_set<std::string> seen;
+    std::vector<std::pair<juce::String, juce::String>> dropped;
+    for (auto& obj : objects)
+    {
+        auto normalized = normalizeObjectKey(obj);
+        auto key = normalized.toStdString();
+        if (seen.insert(key).second)
+        {
+            uniqueObjects.push_back(obj);
+        }
+        else
+        {
+            dropped.emplace_back(obj, normalized);
+        }
+    }
+
+    juce::StringArray first20Kept;
+    for (int i = 0; i < juce::jmin<int>(20, (int) uniqueObjects.size()); ++i)
+        first20Kept.add(uniqueObjects[(size_t) i]);
+
+    auto dest = getDestinationDirectory();
+    juce::File dbgAll = dest.getChildFile("preview_objects_all.txt");
+    juce::File dbgKept = dest.getChildFile("preview_objects_kept.txt");
+
+    auto writeList = [](const juce::File& f, const juce::StringArray& lines)
+    {
+        juce::FileOutputStream os(f);
+        if (os.openedOk())
+        {
+            for (auto& s : lines)
+                os.writeText(s + "\n", false, false, "\n");
+            os.flush();
+        }
+    };
+
+    writeList(dbgAll, first20All);
+    writeList(dbgKept, first20Kept);
+
+    if (log)
+    {
+        for (int i = 0; i < juce::jmin<int>(5, (int) dropped.size()); ++i)
+        {
+            const auto& pair = dropped[(size_t) i];
+            log("[dedupe] drop " + pair.first + " (key=" + pair.second + ")");
+        }
+    }
+
+    result.summary = summaryText + " | unique files: " + juce::String((int) uniqueObjects.size());
     result.runsText = runsText;
     result.windows = windows;
     result.urls = urls;
@@ -1337,26 +1425,6 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
             result.files.add(lf);
         }
     }
-
-#if JUCE_DEBUG
-    if (! localCsvs.isEmpty())
-    {
-        auto debugDir = localCsvs[0].getParentDirectory();
-
-        juce::StringArray limitedObjects;
-        for (int i = 0; i < juce::jmin(100, rawObjectNames.size()); ++i)
-            limitedObjects.add(rawObjectNames[i]);
-
-        auto objectsFile = debugDir.getChildFile("preview_objects.txt");
-        auto basenamesFile = debugDir.getChildFile("preview_basenames.txt");
-
-        writeTextFile(objectsFile, limitedObjects.joinIntoString("\n"));
-        writeTextFile(basenamesFile, uniqueBasenames.joinIntoString("\n"));
-    }
-#endif
-#if ! JUCE_DEBUG
-    juce::ignoreUnused(rawObjectNames);
-#endif
 
     return result;
 }
