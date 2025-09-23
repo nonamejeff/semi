@@ -14,7 +14,9 @@
 #include <string>
 #include <stdexcept>
 #include <utility>
+#include <unordered_map>
 #include <unordered_set>
+#include <limits>
 #include <vector>
 
 namespace sanctsound
@@ -118,6 +120,307 @@ static bool hasAudioExt(const juce::String& name)
 static juce::String normKey(const juce::String& name)
 {
     return name.toLowerCase().removeCharacters("\r\n");
+}
+
+struct CsvWindow
+{
+    juce::Time start;
+    juce::Time end;
+    juce::String url;
+    juce::String source;
+};
+
+static bool isNumeric(const juce::String& text);
+static bool timeLessThan(const juce::Time& a, const juce::Time& b);
+static bool timeLessThanOrEqual(const juce::Time& a, const juce::Time& b);
+
+static juce::String normaliseHeaderName(const juce::String& header)
+{
+    auto lower = header.trim().toLowerCase();
+    juce::String cleaned;
+    for (auto ch : lower)
+    {
+        if (juce::CharacterFunctions::isLetterOrDigit(ch))
+            cleaned << ch;
+    }
+    return cleaned;
+}
+
+static int findColumnByAliases(const juce::StringArray& header,
+                               const std::vector<juce::String>& aliases)
+{
+    if (header.isEmpty() || aliases.empty())
+        return -1;
+
+    juce::Array<juce::String> normalisedHeader;
+    normalisedHeader.ensureStorageAllocated(header.size());
+    for (auto& h : header)
+        normalisedHeader.add(normaliseHeaderName(h));
+
+    juce::Array<juce::String> normalisedAliases;
+    normalisedAliases.ensureStorageAllocated((int) aliases.size());
+    for (auto& alias : aliases)
+        normalisedAliases.add(normaliseHeaderName(alias));
+
+    for (int col = 0; col < normalisedHeader.size(); ++col)
+    {
+        auto& candidate = normalisedHeader.getReference(col);
+        for (auto& alias : normalisedAliases)
+            if (candidate == alias)
+                return col;
+    }
+
+    for (int col = 0; col < normalisedHeader.size(); ++col)
+    {
+        auto& candidate = normalisedHeader.getReference(col);
+        for (auto& alias : normalisedAliases)
+            if (candidate.contains(alias))
+                return col;
+    }
+
+    return -1;
+}
+
+static int findDurationColumn(const juce::StringArray& header)
+{
+    for (int col = 0; col < header.size(); ++col)
+    {
+        auto normalised = normaliseHeaderName(header[col]);
+        if (normalised.contains("duration") || normalised.contains("dur") || normalised.contains("length"))
+            return col;
+    }
+    return -1;
+}
+
+static bool parseTimeUTC(const juce::String& text, juce::Time& out)
+{
+    auto trimmed = text.trim();
+    if (trimmed.isEmpty())
+        return false;
+
+    auto digitsOnly = trimmed.containsOnly("0123456789");
+    if (digitsOnly)
+    {
+        auto yearCandidate = trimmed.substring(0, 4).getIntValue();
+        if (trimmed.length() >= 14 && yearCandidate >= 1900 && yearCandidate <= 2200)
+        {
+            int month  = trimmed.substring(4, 6).getIntValue();
+            int day    = trimmed.substring(6, 8).getIntValue();
+            int hour   = trimmed.substring(8, 10).getIntValue();
+            int minute = trimmed.substring(10, 12).getIntValue();
+            int second = trimmed.substring(12, 14).getIntValue();
+            juce::Time base(yearCandidate, month, day, hour, minute, second, 0, false);
+            if (trimmed.length() > 14)
+            {
+                auto fractionalDigits = trimmed.substring(14);
+                double fractionalSeconds = 0.0;
+                if (fractionalDigits.containsOnly("0123456789"))
+                {
+                    auto fractionInt = fractionalDigits.getLargeIntValue();
+                    double scale = std::pow(10.0, fractionalDigits.length());
+                    fractionalSeconds = fractionInt / scale;
+                }
+                base = base + juce::RelativeTime::seconds(fractionalSeconds);
+            }
+            out = base;
+            return true;
+        }
+
+        auto value = trimmed.getLargeIntValue();
+        bool treatAsMillis = trimmed.length() > 10 || value >= 1000000000000LL;
+        juce::int64 millis = treatAsMillis ? value : (value * 1000);
+        out = juce::Time(millis);
+        return true;
+    }
+
+    auto numericWithDot = trimmed.containsOnly("0123456789.");
+    if (numericWithDot && trimmed.containsChar('.'))
+    {
+        auto value = trimmed.getDoubleValue();
+        if (value != 0.0 || trimmed.startsWith("0") || trimmed.startsWithChar('.'))
+        {
+            auto millis = static_cast<juce::int64>(std::llround(value * 1000.0));
+            out = juce::Time(millis);
+            return true;
+        }
+    }
+
+    auto addCompactCandidate = [](juce::StringArray& list, const juce::String& candidate)
+    {
+        auto trimmedCandidate = candidate.trim();
+        if (trimmedCandidate.isEmpty())
+            return;
+        auto digits = trimmedCandidate.retainCharacters("0123456789");
+        if (digits.length() >= 14)
+        {
+            auto year   = digits.substring(0, 4);
+            auto month  = digits.substring(4, 6);
+            auto day    = digits.substring(6, 8);
+            auto hour   = digits.substring(8, 10);
+            auto minute = digits.substring(10, 12);
+            auto second = digits.substring(12, 14);
+            juce::String iso = year + "-" + month + "-" + day + "T" + hour + ":" + minute + ":" + second;
+            if (digits.length() > 14)
+                iso << "." << digits.substring(14);
+            iso << "Z";
+            if (! list.contains(iso))
+                list.add(iso);
+        }
+    };
+
+    juce::StringArray candidates;
+    auto addCandidate = [&](const juce::String& candidate)
+    {
+        auto value = candidate.trim();
+        if (value.isNotEmpty() && ! candidates.contains(value))
+            candidates.add(value);
+    };
+
+    addCandidate(trimmed);
+    addCandidate(trimmed.replaceCharacter('/', '-'));
+    if (trimmed.containsChar(' '))
+        addCandidate(trimmed.replaceCharacter(' ', 'T'));
+
+    auto canonical = trimmed.replaceCharacter('/', '-');
+    if (canonical.containsChar(' '))
+        addCandidate(canonical.replaceCharacter(' ', 'T'));
+
+    auto currentSize = candidates.size();
+    for (int i = 0; i < currentSize; ++i)
+    {
+        auto candidate = candidates[i];
+        if (! candidate.endsWithIgnoreCase("Z"))
+            addCandidate(candidate + "Z");
+    }
+
+    addCompactCandidate(candidates, trimmed);
+    addCompactCandidate(candidates, canonical);
+
+    for (auto candidate : candidates)
+    {
+        auto parsed = juce::Time::fromISO8601(candidate);
+        if (parsed == juce::Time())
+        {
+            if (! candidate.containsIgnoreCase("1970-01-01"))
+                continue;
+        }
+        out = parsed;
+        return true;
+    }
+
+    return false;
+}
+
+static bool parseAudioTimesFromName(const juce::String& name,
+                                    juce::Time& start,
+                                    juce::Time& end)
+{
+    auto base = name.fromLastOccurrenceOf("/", false, false);
+    if (base.isEmpty())
+        base = name;
+
+    auto dot = base.lastIndexOfChar('.');
+    if (dot <= 0)
+        return false;
+
+    auto stem = base.substring(0, dot);
+    juce::StringArray parts;
+    parts.addTokens(stem, "_", "");
+    parts.removeEmptyStrings();
+    if (parts.size() < 4)
+        return false;
+
+    auto startToken = parts[parts.size() - 2];
+    auto endToken   = parts[parts.size() - 1];
+
+    juce::Time parsedStart;
+    juce::Time parsedEnd;
+    if (! parseTimeUTC(startToken, parsedStart))
+        return false;
+    if (! parseTimeUTC(endToken, parsedEnd))
+        return false;
+
+    if (! timeLessThan(parsedStart, parsedEnd))
+    {
+        if (parsedStart == parsedEnd)
+            parsedEnd = parsedStart + juce::RelativeTime::seconds(1);
+        else if (timeLessThan(parsedEnd, parsedStart))
+            std::swap(parsedStart, parsedEnd);
+    }
+
+    start = parsedStart;
+    end   = parsedEnd;
+    return true;
+}
+
+static std::vector<CsvWindow> parseCsvWindows(const juce::Array<juce::File>& csvFiles)
+{
+    std::vector<CsvWindow> windows;
+
+    const std::vector<juce::String> startAliases { "start_time", "start", "start_utc", "begin", "window_start" };
+    const std::vector<juce::String> endAliases   { "end_time", "end", "end_utc", "finish", "window_end" };
+    const std::vector<juce::String> urlAliases   { "audio_url", "url", "gcs_url", "gcs_uri" };
+
+    for (auto& csv : csvFiles)
+    {
+        auto table = readCsvFile(csv);
+        if (table.rows.isEmpty())
+            continue;
+
+        auto startCol = findColumnByAliases(table.header, startAliases);
+        if (startCol < 0)
+            throw std::runtime_error("No usable start column in " + csv.getFileName().toStdString());
+
+        auto endCol = findColumnByAliases(table.header, endAliases);
+        auto urlCol = findColumnByAliases(table.header, urlAliases);
+        int durationCol = -1;
+        if (endCol < 0)
+            durationCol = findDurationColumn(table.header);
+
+        for (int rowIdx = 0; rowIdx < table.rows.size(); ++rowIdx)
+        {
+            auto& row = table.rows.getReference(rowIdx);
+            if (startCol >= row.size())
+                continue;
+
+            juce::Time startTime;
+            if (! parseTimeUTC(row[startCol], startTime))
+                continue;
+
+            juce::Time endTime;
+            bool haveEnd = false;
+            if (endCol >= 0 && endCol < row.size())
+                haveEnd = parseTimeUTC(row[endCol], endTime);
+
+            if (! haveEnd)
+            {
+                double durationSeconds = 0.0;
+                if (durationCol >= 0 && durationCol < row.size() && isNumeric(row[durationCol]))
+                    durationSeconds = std::max(0.0, row[durationCol].getDoubleValue());
+                if (durationSeconds <= 0.0)
+                    durationSeconds = 60.0;
+                endTime = startTime + juce::RelativeTime::seconds(durationSeconds);
+            }
+
+            if (! timeLessThan(startTime, endTime))
+                endTime = startTime + juce::RelativeTime::seconds(1);
+
+            juce::String url;
+            if (urlCol >= 0 && urlCol < row.size())
+                url = row[urlCol].trim();
+
+            windows.push_back({ startTime, endTime, url, csv.getFileName() });
+        }
+    }
+
+    std::sort(windows.begin(), windows.end(), [](const CsvWindow& a, const CsvWindow& b)
+    {
+        if (timeLessThan(a.start, b.start)) return true;
+        if (timeLessThan(b.start, a.start)) return false;
+        return a.source.compareIgnoreCase(b.source) < 0;
+    });
+
+    return windows;
 }
 
 static void gcsListRecursive(const juce::String& bucket,
@@ -231,6 +534,19 @@ static void writeTextFile(const juce::File& f, const juce::String& text)
     out.flush();
     if (out.getStatus().failed())
         throw std::runtime_error("Write failed: " + out.getStatus().getErrorMessage().toStdString());
+}
+
+static juce::var readJsonFile(const juce::File& file)
+{
+    if (! file.existsAsFile())
+        return {};
+    auto text = file.loadFileAsString();
+    if (text.isEmpty())
+        return {};
+    auto parsed = juce::JSON::parse(text);
+    if (parsed.isVoid() || parsed.isUndefined())
+        return {};
+    return parsed;
 }
 
 juce::String siteLabelForCode(const juce::String& code)
@@ -548,77 +864,6 @@ juce::Array<juce::Time> parsePresenceDaysFromCsv(const juce::File& file)
     return days;
 }
 
-juce::Array<PreviewWindow> parseEventsFromCsv(const juce::File& file)
-{
-    auto table = readCsvFile(file);
-    auto dtCol = detectDatetimeColumn(table, 0.05);
-    if (dtCol < 0)
-        throw std::runtime_error("No usable datetime column in " + file.getFileName().toStdString());
-
-    int endCol = -1;
-    for (int i = 0; i < table.header.size(); ++i)
-    {
-        if (i == dtCol)
-            continue;
-        auto header = table.header[i].toLowerCase();
-        if (header.contains("end"))
-        {
-            endCol = i;
-            break;
-        }
-    }
-
-    int durationCol = -1;
-    for (int i = 0; i < table.header.size(); ++i)
-    {
-        auto header = table.header[i].toLowerCase();
-        if (header.contains("duration") || header.contains("dur") || header.contains("length"))
-        {
-            durationCol = i;
-            break;
-        }
-    }
-
-    juce::Array<PreviewWindow> events;
-    const double fallbackSeconds = 60.0;
-
-    for (int rowIdx = 0; rowIdx < table.rows.size(); ++rowIdx)
-    {
-        auto& row = table.rows.getReference(rowIdx);
-        if (dtCol >= row.size())
-            continue;
-        juce::Time start;
-        if (! parseTimestamp(row[dtCol], start))
-            continue;
-
-        juce::Time end;
-        if (endCol >= 0 && endCol < row.size() && parseTimestamp(row[endCol], end))
-        {
-            if (! timeLessThan(start, end))
-                end = start + juce::RelativeTime::seconds(fallbackSeconds);
-        }
-        else
-        {
-            double duration = fallbackSeconds;
-            if (durationCol >= 0 && durationCol < row.size() && isNumeric(row[durationCol]))
-            {
-                auto v = row[durationCol].getDoubleValue();
-                if (v > 0)
-                    duration = v;
-            }
-            end = start + juce::RelativeTime::seconds(duration);
-        }
-        events.add({ start, end });
-    }
-
-    std::sort(events.begin(), events.end(), [](const PreviewWindow& a, const PreviewWindow& b)
-    {
-        return timeLessThan(a.start, b.start);
-    });
-
-    return events;
-}
-
 juce::var findFirst(const juce::var& obj, const std::vector<juce::String>& keys)
 {
     if (obj.isObject())
@@ -802,8 +1047,20 @@ struct DownloadedFile
     juce::String url;
 };
 
+static juce::File offlineBucketFile(const juce::File& offlineRoot,
+                                    const juce::String& bucket,
+                                    const juce::String& objectName)
+{
+    if (! offlineRoot.isDirectory())
+        return {};
+
+    auto gcsRoot = offlineRoot.getChildFile("gcs");
+    return gcsRoot.getChildFile(bucket).getChildFile(objectName);
+}
+
 std::vector<DownloadedFile> downloadFilesTo(const juce::StringArray& urls,
                                             const juce::File& dest,
+                                            const juce::File& offlineRoot,
                                             SanctSoundClient::LogFn log)
 {
     std::vector<DownloadedFile> out;
@@ -824,30 +1081,6 @@ std::vector<DownloadedFile> downloadFilesTo(const juce::StringArray& urls,
         juce::String objectName;
         juce::String httpUrl;
 
-        if (parseGsUrl(url, bucket, objectName))
-        {
-            httpUrl = makeHttpsUrl(bucket, objectName);
-        }
-        else
-        {
-            httpUrl = url;
-        }
-
-        if (log)
-            log("[http] GET " + httpUrl);
-
-        int statusCode = 0;
-        juce::StringPairArray headers;
-        juce::URL u(httpUrl);
-        auto stream = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
-                                              .withConnectionTimeoutMs(15000)
-                                              .withResponseHeaders(&headers)
-                                              .withStatusCode(&statusCode));
-        if (stream == nullptr || statusCode >= 400)
-        {
-            throw std::runtime_error("GCS download failed: HTTP " + std::to_string(statusCode));
-        }
-
         juce::String base;
         if (objectName.isNotEmpty())
             base = objectName.fromLastOccurrenceOf("/", false, false);
@@ -855,17 +1088,58 @@ std::vector<DownloadedFile> downloadFilesTo(const juce::StringArray& urls,
             base = url.fromLastOccurrenceOf("/", false, false);
 
         auto local = dest.getChildFile(base);
-        ensureParentDir(local);
-        juce::FileOutputStream outStream(local);
-        if (! outStream.openedOk())
-            throw std::runtime_error("Failed to open file for writing: " + local.getFullPathName().toStdString());
 
-        if (outStream.writeFromInputStream(*stream, -1) < 0)
-            throw std::runtime_error("Failed to write file: " + local.getFullPathName().toStdString());
+        bool handledOffline = false;
+        if (offlineRoot.isDirectory() && parseGsUrl(url, bucket, objectName))
+        {
+            auto offlineFile = offlineBucketFile(offlineRoot, bucket, objectName);
+            if (offlineFile.existsAsFile())
+            {
+                if (log)
+                    log("[offline] copy " + offlineFile.getFullPathName());
+                ensureParentDir(local);
+                if (local.existsAsFile())
+                    local.deleteFile();
+                if (! offlineFile.copyFileTo(local))
+                    throw std::runtime_error("Failed to copy offline file: " + offlineFile.getFullPathName().toStdString());
+                handledOffline = true;
+            }
+        }
 
-        outStream.flush();
-        if (outStream.getStatus().failed())
-            throw std::runtime_error("Write failed: " + outStream.getStatus().getErrorMessage().toStdString());
+        if (! handledOffline)
+        {
+            if (parseGsUrl(url, bucket, objectName))
+                httpUrl = makeHttpsUrl(bucket, objectName);
+            else
+                httpUrl = url;
+
+            if (log)
+                log("[http] GET " + httpUrl);
+
+            int statusCode = 0;
+            juce::StringPairArray headers;
+            juce::URL u(httpUrl);
+            auto stream = u.createInputStream(juce::URL::InputStreamOptions(juce::URL::ParameterHandling::inAddress)
+                                                  .withConnectionTimeoutMs(15000)
+                                                  .withResponseHeaders(&headers)
+                                                  .withStatusCode(&statusCode));
+            if (stream == nullptr || statusCode >= 400)
+            {
+                throw std::runtime_error("GCS download failed: HTTP " + std::to_string(statusCode));
+            }
+
+            ensureParentDir(local);
+            juce::FileOutputStream outStream(local);
+            if (! outStream.openedOk())
+                throw std::runtime_error("Failed to open file for writing: " + local.getFullPathName().toStdString());
+
+            if (outStream.writeFromInputStream(*stream, -1) < 0)
+                throw std::runtime_error("Failed to write file: " + local.getFullPathName().toStdString());
+
+            outStream.flush();
+            if (outStream.getStatus().failed())
+                throw std::runtime_error("Write failed: " + outStream.getStatus().getErrorMessage().toStdString());
+        }
 
         out.push_back({ local, url });
     }
@@ -944,6 +1218,21 @@ SanctSoundClient::SanctSoundClient()
     gcsBucket = "noaa-passive-bioacoustic";
     audioPrefix = "sanctsound/audio/";
     productsPrefix = "sanctsound/products/detections";
+
+    auto offlineEnv = juce::SystemStats::getEnvironmentVariable("SANCTSOUND_OFFLINE_ROOT", {});
+    if (offlineEnv.isNotEmpty())
+        setOfflineDataRoot(juce::File(offlineEnv));
+}
+
+void SanctSoundClient::setOfflineDataRoot(const juce::File& directory)
+{
+    offlineDataRoot = directory;
+    offlineEnabled = directory.exists() && directory.isDirectory();
+}
+
+const juce::File& SanctSoundClient::getOfflineDataRoot() const
+{
+    return offlineDataRoot;
 }
 
 SanctSoundClient::AudioListingResult SanctSoundClient::listAudioObjectsForGroup(const juce::String& site,
@@ -961,83 +1250,108 @@ SanctSoundClient::AudioListingResult SanctSoundClient::listAudioObjectsForGroup(
     const juce::String group = groupName.trim();
     listing.prefix = audioRoot + siteCode + "/" + group + "/";
 
-    if (log)
-        log("[gcs] list " + makeGsUrl(bucket, listing.prefix));
-
     juce::StringArray objects;
-    std::unordered_set<std::string> visited;
-    gcsListRecursive(bucket, listing.prefix, objects, visited);
+    if (offlineEnabled)
+    {
+        auto offlineFile = offlineDataRoot.getChildFile("audio_index")
+                                          .getChildFile(siteCode + "__" + group + ".json");
+        auto parsed = readJsonFile(offlineFile);
+        if (parsed.isVoid() || parsed.isUndefined())
+        {
+            juce::String message = "Offline audio index missing for " + siteCode + "/" + group;
+            throw std::runtime_error(message.toStdString());
+        }
+
+        if (auto* arr = parsed.getArray())
+        {
+            for (auto& value : *arr)
+            {
+                if (value.isString())
+                    objects.add(value.toString());
+            }
+        }
+        else if (auto* obj = parsed.getDynamicObject())
+        {
+            for (auto& prop : obj->getProperties())
+            {
+                if (prop.value.isString())
+                    objects.add(prop.value.toString());
+            }
+        }
+        else if (parsed.isString())
+        {
+            objects.add(parsed.toString());
+        }
+
+        if (log)
+            log("[offline] audio index " + offlineFile.getFullPathName());
+    }
+    else
+    {
+        if (log)
+            log("[gcs] list " + makeGsUrl(bucket, listing.prefix));
+
+        std::unordered_set<std::string> visited;
+        gcsListRecursive(bucket, listing.prefix, objects, visited);
+    }
+
     listing.totalListed = objects.size();
 
-    std::vector<juce::String> sortedObjects;
-    sortedObjects.reserve(objects.size());
+    std::vector<juce::String> audioObjects;
+    audioObjects.reserve(objects.size());
     for (auto& obj : objects)
-        sortedObjects.push_back(obj);
-    std::sort(sortedObjects.begin(), sortedObjects.end(), [](const juce::String& a, const juce::String& b)
+        if (hasAudioExt(obj))
+            audioObjects.push_back(obj);
+
+    std::sort(audioObjects.begin(), audioObjects.end(), [](const juce::String& a, const juce::String& b)
     {
         return a.compareIgnoreCase(b) < 0;
     });
 
-    for (size_t i = 0; i < std::min<size_t>(30, sortedObjects.size()); ++i)
-        listing.sampleAll.add(sortedObjects[i]);
+    for (size_t i = 0; i < std::min<size_t>(30, audioObjects.size()); ++i)
+        listing.sampleAll.add(audioObjects[i]);
 
-    std::unordered_set<std::string> seen;
-    std::vector<juce::String> uniqueObjects;
-    uniqueObjects.reserve(sortedObjects.size());
-    std::vector<std::pair<juce::String, juce::String>> dropped;
+    std::unordered_set<std::string> seenObjects;
+    seenObjects.reserve(audioObjects.size());
 
-    for (auto& obj : sortedObjects)
+    for (auto& obj : audioObjects)
     {
-        if (! hasAudioExt(obj))
+        auto key = obj.toStdString();
+        if (! seenObjects.insert(key).second)
             continue;
 
-        auto normalized = normKey(obj);
-        auto key = normalized.toStdString();
-        if (seen.insert(key).second)
+        juce::Time spanStart;
+        juce::Time spanEnd;
+        if (parseAudioTimesFromName(obj, spanStart, spanEnd))
         {
-            uniqueObjects.push_back(obj);
+            listing.spans.push_back({ obj, spanStart, spanEnd });
         }
         else
         {
-            dropped.emplace_back(obj, normalized);
+            if (listing.sampleDropped.size() < 30)
+                listing.sampleDropped.add(obj + " | parse_failed");
         }
     }
 
-    listing.droppedPairs = dropped;
-    for (size_t i = 0; i < std::min<size_t>(20, dropped.size()); ++i)
-        listing.sampleDropped.add(dropped[i].first + " | key=" + dropped[i].second);
-
-    std::sort(uniqueObjects.begin(), uniqueObjects.end(), [](const juce::String& a, const juce::String& b)
+    std::sort(listing.spans.begin(), listing.spans.end(), [](const AudioSpan& a, const AudioSpan& b)
     {
-        auto baseA = a.fromLastOccurrenceOf("/", false, false);
-        auto baseB = b.fromLastOccurrenceOf("/", false, false);
-        auto startA = parseAudioStartFromName(baseA);
-        auto startB = parseAudioStartFromName(baseB);
-        if (startA.hasValue() && startB.hasValue())
-        {
-            if (timeLessThan(*startA, *startB)) return true;
-            if (timeLessThan(*startB, *startA)) return false;
-        }
-        else if (startA.hasValue() != startB.hasValue())
-        {
-            return startA.hasValue();
-        }
-        return a.compareIgnoreCase(b) < 0;
+        if (timeLessThan(a.start, b.start)) return true;
+        if (timeLessThan(b.start, a.start)) return false;
+        return a.object.compareIgnoreCase(b.object) < 0;
     });
 
-    listing.uniqueObjects = uniqueObjects;
-    for (size_t i = 0; i < std::min<size_t>(30, uniqueObjects.size()); ++i)
-        listing.sampleKept.add(uniqueObjects[i]);
+    listing.uniqueObjects.clear();
+    listing.uniqueObjects.reserve(listing.spans.size());
+    for (auto& span : listing.spans)
+        listing.uniqueObjects.push_back(span.object);
+
+    for (size_t i = 0; i < std::min<size_t>(30, listing.uniqueObjects.size()); ++i)
+        listing.sampleKept.add(listing.uniqueObjects[i]);
+
+    if (log)
+        log("Audio spans indexed: " + juce::String((int) listing.spans.size()));
 
     return listing;
-}
-
-void SanctSoundClient::writeAudioListingDebugFiles(const AudioListingResult& listing) const
-{
-    auto dest = getDestinationDirectory();
-    writeLines(dest.getChildFile("debug_preview_all.txt"), listing.sampleAll);
-    writeLines(dest.getChildFile("debug_preview_kept.txt"), listing.sampleKept);
-    writeLines(dest.getChildFile("debug_preview_dropped.txt"), listing.sampleDropped);
 }
 
 bool SanctSoundClient::setDestinationDirectory(const juce::File& directory)
@@ -1081,6 +1395,90 @@ std::vector<ProductGroup> SanctSoundClient::listProductGroups(const juce::String
                                                               const juce::String& tag,
                                                               LogFn log) const
 {
+    if (offlineEnabled)
+    {
+        std::vector<ProductGroup> offlineGroups;
+        auto offlineFile = offlineDataRoot.getChildFile("product_groups.json");
+        auto parsed = readJsonFile(offlineFile);
+        if (parsed.isVoid() || parsed.isUndefined())
+            throw std::runtime_error("Offline product_groups.json missing");
+
+        auto siteEntry = parsed.getProperty(site, juce::var());
+        if (siteEntry.isVoid() || siteEntry.isUndefined())
+            return offlineGroups;
+
+        const auto tagLower = tag.trim().toLowerCase();
+
+        auto processGroup = [&](const juce::String& groupName, const juce::var& value)
+        {
+            if (groupName.isEmpty())
+                return;
+            if (tagLower.isNotEmpty() && ! groupName.toLowerCase().contains(tagLower))
+                return;
+
+            ProductGroup group;
+            group.name = groupName;
+
+            if (value.isObject())
+            {
+                group.mode = value.getProperty("mode", juce::String());
+                auto pathsVar = value.getProperty("paths", juce::var());
+                if (auto* arr = pathsVar.getArray())
+                {
+                    for (auto& entry : *arr)
+                        if (entry.isString())
+                            group.paths.add(entry.toString());
+                }
+                else if (pathsVar.isString())
+                {
+                    group.paths.add(pathsVar.toString());
+                }
+            }
+            else if (value.isString())
+            {
+                group.paths.add(value.toString());
+            }
+
+            if (group.paths.isEmpty())
+                return;
+
+            for (auto& path : group.paths)
+            {
+                auto ext = path.fromLastOccurrenceOf(".", true, false).toLowerCase();
+                if (ext.isNotEmpty())
+                    group.extCounts[ext]++;
+            }
+
+            offlineGroups.push_back(group);
+        };
+
+        if (auto* dyn = siteEntry.getDynamicObject())
+        {
+            for (auto& prop : dyn->getProperties())
+                processGroup(prop.name.toString(), prop.value);
+        }
+        else if (auto* arr = siteEntry.getArray())
+        {
+            for (auto& entry : *arr)
+            {
+                juce::String groupName = entry.getProperty("name", juce::String());
+                if (groupName.isEmpty())
+                    continue;
+                processGroup(groupName, entry);
+            }
+        }
+
+        std::sort(offlineGroups.begin(), offlineGroups.end(), [](const ProductGroup& a, const ProductGroup& b)
+        {
+            return a.name.compareIgnoreCase(b.name) < 0;
+        });
+
+        if (log)
+            log("[offline] product groups " + offlineFile.getFullPathName());
+
+        return offlineGroups;
+    }
+
     const juce::String sitePrefix = productsPrefix + "/" + site + "/";
     const juce::String tagLower = tag.trim().toLowerCase();
 
@@ -1242,7 +1640,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     auto preferredFolder = folderFromSet(group.name);
 
     auto bestFiles = chooseBestFiles(group.paths);
-    auto downloaded = downloadFilesTo(bestFiles, destinationDir, log);
+    auto downloaded = downloadFilesTo(bestFiles, destinationDir, offlineDataRoot, log);
 
     juce::Array<juce::File> localCsvs;
     for (auto& item : downloaded)
@@ -1254,6 +1652,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
 
     juce::Array<PreviewWindow> windows;
     juce::Array<PreviewWindow> rawWindows;
+    std::vector<CsvWindow> csvWindows;
     juce::String runsText;
     juce::String summaryText;
     juce::Time tmin;
@@ -1327,18 +1726,24 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     }
     else
     {
+        csvWindows = parseCsvWindows(localCsvs);
         rawWindows = juce::Array<PreviewWindow>();
-        for (auto& csv : localCsvs)
-            rawWindows.addArray(parseEventsFromCsv(csv));
-        windows = rawWindows;
-        std::sort(windows.begin(), windows.end(), [](auto& a, auto& b) { return timeLessThan(a.start, b.start); });
-        if (! windows.isEmpty())
+        windows = juce::Array<PreviewWindow>();
+        for (auto& w : csvWindows)
         {
-            tmin = windows.getFirst().start;
-            tmax = windows.getLast().end;
+            PreviewWindow window { w.start, w.end };
+            rawWindows.add(window);
+            windows.add(window);
         }
-        runsText << "Events: " << windows.size() << "\n";
-        summaryText = group.name + " | mode: event";
+        if (! csvWindows.empty())
+        {
+            tmin = csvWindows.front().start;
+            tmax = csvWindows.back().end;
+        }
+        runsText << "Events: " << csvWindows.size() << "\n";
+        summaryText = "Events: " + juce::String((int) csvWindows.size());
+        if (log)
+            log("CSV windows parsed: " + juce::String((int) csvWindows.size()));
     }
 
     if (log)
@@ -1350,19 +1755,11 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     }
 
     auto listing = listAudioObjectsForGroup(site, group.name, log);
-    writeAudioListingDebugFiles(listing);
 
     if (log)
-    {
         log("previewGroup: listed=" + juce::String(listing.totalListed)
-            + " kept=" + juce::String((int) listing.uniqueObjects.size())
+            + " spans=" + juce::String((int) listing.spans.size())
             + " prefix=" + listing.prefix);
-        for (int i = 0; i < juce::jmin<int>(5, (int) listing.droppedPairs.size()); ++i)
-        {
-            const auto& pair = listing.droppedPairs[(size_t) i];
-            log("[dedupe] drop " + pair.first + " (key=" + pair.second + ")");
-        }
-    }
 
     juce::String fallbackFolder = preferredFolder;
     if (fallbackFolder.isEmpty())
@@ -1370,83 +1767,343 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     if (fallbackFolder.isEmpty())
         fallbackFolder = group.name;
 
-    auto audioFiles = buildAudioReferencesFromObjects(listing.uniqueObjects,
-                                                     gcsBucket,
-                                                     tmin,
-                                                     tmax,
-                                                     fallbackFolder);
-    juce::StringArray urls;
-    juce::StringArray names;
-    minimalUnionForWindows(audioFiles, windows, urls, names);
-
-    std::vector<juce::String> objects;
-    objects.reserve((size_t) urls.size());
-    for (auto& url : urls)
+    if (mode == "EVENT")
     {
-        juce::String bucketName;
-        juce::String objectName;
-        if (parseGsUrl(url, bucketName, objectName))
+        std::unordered_map<std::string, size_t> spanIndex;
+        spanIndex.reserve(listing.spans.size());
+        for (size_t i = 0; i < listing.spans.size(); ++i)
+            spanIndex[listing.spans[i].object.toLowerCase().toStdString()] = i;
+
+        auto findByBaseName = [&](const juce::String& base) -> const AudioSpan*
         {
-            objects.push_back(objectName);
+            const AudioSpan* match = nullptr;
+            for (auto& span : listing.spans)
+            {
+                auto spanBase = span.object.fromLastOccurrenceOf("/", false, false);
+                if (spanBase.equalsIgnoreCase(base))
+                {
+                    if (match != nullptr)
+                        return nullptr;
+                    match = &span;
+                }
+            }
+            return match;
+        };
+
+        auto lookupSpanForUrl = [&](const juce::String& value, juce::String& reason) -> const AudioSpan*
+        {
+            auto trimmed = value.trim();
+            if (trimmed.isEmpty())
+                return nullptr;
+
+            juce::String bucketName;
+            juce::String objectName;
+            if (parseGsUrl(trimmed, bucketName, objectName))
+            {
+                auto key = objectName.trim().toLowerCase().toStdString();
+                auto it = spanIndex.find(key);
+                if (it != spanIndex.end())
+                    return &listing.spans[it->second];
+                reason = "csv_url_not_found";
+                return nullptr;
+            }
+
+            juce::URL url(trimmed);
+            if (url.isWellFormed())
+            {
+                auto path = juce::URL::removeEscapeChars(url.getSubPath());
+                juce::String candidate;
+                auto bucketPrefix = "/" + gcsBucket + "/";
+                if (path.startsWithChar('/'))
+                    path = path.substring(1);
+                if (path.startsWith(gcsBucket + "/"))
+                    candidate = path.substring(gcsBucket.length() + 1);
+                else
+                {
+                    auto pos = path.indexOf(bucketPrefix);
+                    if (pos >= 0)
+                        candidate = path.substring(pos + bucketPrefix.length());
+                }
+                if (candidate.isNotEmpty())
+                {
+                    candidate = juce::URL::removeEscapeChars(candidate);
+                    auto key = candidate.trim().toLowerCase().toStdString();
+                    auto it = spanIndex.find(key);
+                    if (it != spanIndex.end())
+                        return &listing.spans[it->second];
+                }
+            }
+
+            auto base = trimmed.fromLastOccurrenceOf("/", false, false);
+            if (base.isNotEmpty())
+            {
+                if (auto* match = findByBaseName(base))
+                    return match;
+                reason = "csv_url_ambiguous";
+            }
+            else
+            {
+                auto key = trimmed.toLowerCase();
+                auto it = spanIndex.find(key.toStdString());
+                if (it != spanIndex.end())
+                    return &listing.spans[it->second];
+            }
+
+            if (reason.isEmpty())
+                reason = "csv_url_not_found";
+            return nullptr;
+        };
+
+        auto findSpanForTime = [&](const juce::Time& ts, juce::String& reason) -> const AudioSpan*
+        {
+            if (listing.spans.empty())
+            {
+                reason = "no_spans_indexed";
+                return nullptr;
+            }
+
+            int low = 0;
+            int high = (int) listing.spans.size() - 1;
+            int candidate = -1;
+            while (low <= high)
+            {
+                int mid = (low + high) / 2;
+                if (timeLessThanOrEqual(listing.spans[mid].start, ts))
+                {
+                    candidate = mid;
+                    low = mid + 1;
+                }
+                else
+                {
+                    high = mid - 1;
+                }
+            }
+
+            if (candidate >= 0)
+            {
+                const auto& span = listing.spans[(size_t) candidate];
+                if (timeLessThanOrEqual(span.start, ts) && timeLessThan(ts, span.end))
+                    return &span;
+            }
+
+            const auto toleranceMs = juce::RelativeTime::minutes(10).inMilliseconds();
+            const AudioSpan* best = nullptr;
+            juce::int64 bestDiff = std::numeric_limits<juce::int64>::max();
+
+            auto consider = [&](int index)
+            {
+                if (index < 0 || index >= (int) listing.spans.size())
+                    return;
+                const auto& span = listing.spans[(size_t) index];
+                auto diff = std::llabs(span.start.toMilliseconds() - ts.toMilliseconds());
+                if (diff <= toleranceMs && diff < bestDiff)
+                {
+                    best = &span;
+                    bestDiff = diff;
+                }
+            };
+
+            consider(candidate);
+            consider(candidate + 1);
+            if (candidate < 0)
+                consider(0);
+
+            if (best != nullptr)
+                return best;
+
+            if (timeLessThan(ts, listing.spans.front().start))
+                reason = "before_first_span";
+            else if (timeLessThan(listing.spans.back().start, ts))
+                reason = "after_last_span";
+            else
+                reason = "no_span_within_tolerance";
+            return nullptr;
+        };
+
+        std::unordered_set<std::string> seen;
+        juce::StringArray matchedUrls;
+        juce::StringArray matchedNames;
+        std::vector<const AudioSpan*> uniqueSpans;
+        juce::StringArray debugAll;
+        juce::StringArray debugDropped;
+
+        int matchedCount = 0;
+        int unmatchedCount = 0;
+
+        for (auto& window : csvWindows)
+        {
+            if (debugAll.size() < 50)
+                debugAll.add(window.start.toISO8601(true));
+
+            juce::StringArray reasons;
+            const AudioSpan* chosen = nullptr;
+
+            if (window.url.isNotEmpty())
+            {
+                juce::String reason;
+                chosen = lookupSpanForUrl(window.url, reason);
+                if (chosen == nullptr && reason.isNotEmpty())
+                    reasons.add(reason);
+            }
+
+            if (chosen == nullptr)
+            {
+                juce::String reason;
+                chosen = findSpanForTime(window.start, reason);
+                if (chosen == nullptr && reason.isNotEmpty())
+                    reasons.add(reason);
+            }
+
+            if (chosen != nullptr)
+            {
+                ++matchedCount;
+                auto url = makeGsUrl(gcsBucket, chosen->object);
+                auto key = url.toLowerCase().toStdString();
+                if (seen.insert(key).second)
+                {
+                    matchedUrls.add(url);
+                    matchedNames.add(chosen->object.fromLastOccurrenceOf("/", false, false));
+                    uniqueSpans.push_back(chosen);
+                }
+            }
+            else
+            {
+                ++unmatchedCount;
+                juce::String line = window.start.toISO8601(true);
+                if (! reasons.isEmpty())
+                    line << " | " << reasons.joinIntoString("; ");
+                else
+                    line << " | no_match";
+                if (window.url.isNotEmpty())
+                    line << " | url=" << window.url;
+                if (debugDropped.size() < 30)
+                    debugDropped.add(line);
+                result.unmatchedSummaries.add(line);
+            }
         }
-        else if (hasAudioExt(url))
+
+        result.summary = summaryText + " | unique files: " + juce::String((int) matchedUrls.size());
+        runsText << "Matched windows: " << matchedCount << "\n";
+        runsText << "Unmatched windows: " << unmatchedCount << "\n";
+        result.runsText = runsText;
+        result.windows = windows;
+        result.urls = matchedUrls;
+        result.names = matchedNames;
+        result.matchedWindows = matchedCount;
+        result.unmatchedWindows = unmatchedCount;
+        result.matchedObjects = matchedUrls;
+
+        for (size_t i = 0; i < uniqueSpans.size(); ++i)
         {
-            objects.push_back(url);
-        }
-    }
-
-    std::sort(objects.begin(), objects.end(), [](const juce::String& a, const juce::String& b)
-    {
-        return a.compareIgnoreCase(b) < 0;
-    });
-
-    std::vector<juce::String> uniqueObjects;
-    uniqueObjects.reserve(objects.size());
-    std::unordered_set<std::string> seen;
-    for (auto& obj : objects)
-    {
-        if (! hasAudioExt(obj))
-            continue;
-        auto key = normKey(obj).toStdString();
-        if (seen.insert(key).second)
-            uniqueObjects.push_back(obj);
-    }
-
-    std::sort(uniqueObjects.begin(), uniqueObjects.end(), [](const juce::String& a, const juce::String& b)
-    {
-        auto baseA = a.fromLastOccurrenceOf("/", false, false);
-        auto baseB = b.fromLastOccurrenceOf("/", false, false);
-        auto startA = parseAudioStartFromName(baseA);
-        auto startB = parseAudioStartFromName(baseB);
-        if (startA.hasValue() && startB.hasValue())
-        {
-            if (timeLessThan(*startA, *startB)) return true;
-            if (timeLessThan(*startB, *startA)) return false;
-        }
-        else if (startA.hasValue() != startB.hasValue())
-        {
-            return startA.hasValue();
-        }
-        return a.compareIgnoreCase(b) < 0;
-    });
-
-    result.summary = summaryText + " | unique files: " + juce::String((int) uniqueObjects.size());
-    result.runsText = runsText;
-    result.windows = windows;
-    result.urls = urls;
-    result.names = names;
-
-    for (auto& file : audioFiles)
-    {
-        if (urls.contains(file.url))
-        {
+            const auto* span = uniqueSpans[i];
             ListedFile lf;
-            lf.url = file.url;
-            lf.name = file.name;
-            lf.start = file.start;
-            lf.end = file.end;
-            lf.folder = file.folder;
+            lf.url = matchedUrls[(int) i];
+            lf.name = span->object.fromLastOccurrenceOf("/", false, false);
+            lf.start = span->start;
+            lf.end = span->end;
+            auto folder = folderFromSet(lf.name);
+            if (folder.isEmpty())
+                folder = fallbackFolder;
+            lf.folder = folder;
             result.files.add(lf);
+        }
+
+        if (log)
+            log("Event mapping: matched=" + juce::String(matchedCount)
+                + " unmatched=" + juce::String(unmatchedCount)
+                + " unique_files=" + juce::String(result.files.size()));
+
+        juce::StringArray debugKept;
+        for (int i = 0; i < juce::jmin<int>(30, matchedUrls.size()); ++i)
+            debugKept.add(matchedUrls[i]);
+
+        auto dest = getDestinationDirectory();
+        writeLines(dest.getChildFile("debug_preview_all.txt"), debugAll);
+        writeLines(dest.getChildFile("debug_preview_kept.txt"), debugKept);
+        writeLines(dest.getChildFile("debug_preview_dropped.txt"), debugDropped);
+
+        return result;
+    }
+    else
+    {
+        auto audioFiles = buildAudioReferencesFromObjects(listing.uniqueObjects,
+                                                         gcsBucket,
+                                                         tmin,
+                                                         tmax,
+                                                         fallbackFolder);
+        juce::StringArray urls;
+        juce::StringArray names;
+        minimalUnionForWindows(audioFiles, windows, urls, names);
+
+        std::vector<juce::String> objects;
+        objects.reserve((size_t) urls.size());
+        for (auto& url : urls)
+        {
+            juce::String bucketName;
+            juce::String objectName;
+            if (parseGsUrl(url, bucketName, objectName))
+            {
+                objects.push_back(objectName);
+            }
+            else if (hasAudioExt(url))
+            {
+                objects.push_back(url);
+            }
+        }
+
+        std::sort(objects.begin(), objects.end(), [](const juce::String& a, const juce::String& b)
+        {
+            return a.compareIgnoreCase(b) < 0;
+        });
+
+        std::vector<juce::String> uniqueObjects;
+        uniqueObjects.reserve(objects.size());
+        std::unordered_set<std::string> seen;
+        for (auto& obj : objects)
+        {
+            if (! hasAudioExt(obj))
+                continue;
+            auto key = normKey(obj).toStdString();
+            if (seen.insert(key).second)
+                uniqueObjects.push_back(obj);
+        }
+
+        std::sort(uniqueObjects.begin(), uniqueObjects.end(), [](const juce::String& a, const juce::String& b)
+        {
+            auto baseA = a.fromLastOccurrenceOf("/", false, false);
+            auto baseB = b.fromLastOccurrenceOf("/", false, false);
+            auto startA = parseAudioStartFromName(baseA);
+            auto startB = parseAudioStartFromName(baseB);
+            if (startA.hasValue() && startB.hasValue())
+            {
+                if (timeLessThan(*startA, *startB)) return true;
+                if (timeLessThan(*startB, *startA)) return false;
+            }
+            else if (startA.hasValue() != startB.hasValue())
+            {
+                return startA.hasValue();
+            }
+            return a.compareIgnoreCase(b) < 0;
+        });
+
+        result.summary = summaryText + " | unique files: " + juce::String((int) uniqueObjects.size());
+        result.runsText = runsText;
+        result.windows = windows;
+        result.urls = urls;
+        result.names = names;
+
+        for (auto& file : audioFiles)
+        {
+            if (urls.contains(file.url))
+            {
+                ListedFile lf;
+                lf.url = file.url;
+                lf.name = file.name;
+                lf.start = file.start;
+                lf.end = file.end;
+                lf.folder = file.folder;
+                result.files.add(lf);
+            }
         }
     }
 
@@ -1455,7 +2112,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
 
 void SanctSoundClient::downloadFiles(const juce::StringArray& urls, LogFn log) const
 {
-    downloadFilesTo(urls, destinationDir, log);
+    downloadFilesTo(urls, destinationDir, offlineDataRoot, log);
 }
 
 
