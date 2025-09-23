@@ -1,0 +1,10 @@
+{
+  "ci01": {
+    "sanctsound_ci01_02_bluewhale": {
+      "mode": "EVENT",
+      "paths": [
+        "gs://noaa-passive-bioacoustic/sanctsound/products/detections/ci01/sanctsound_ci01_02_bluewhale/SanctSound_CI01_02_bluewhale_events.csv"
+      ]
+    }
+  }
+}

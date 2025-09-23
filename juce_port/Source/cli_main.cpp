@@ -1,5 +1,6 @@
 #include <juce_core/juce_core.h>
 #include <algorithm>
+#include <stdexcept>
 #include "SanctSoundClient.h"
 #include "PreviewModels.h"
 #include "Utilities.h"
@@ -13,6 +14,18 @@ int main()
     try
     {
         sanctsound::SanctSoundClient client;
+        auto cwd = juce::File::getCurrentWorkingDirectory();
+        auto offlineRoot = cwd.getChildFile("offline_data");
+        if (offlineRoot.isDirectory())
+        {
+            client.setOfflineDataRoot(offlineRoot);
+            juce::Logger::writeToLog("Using offline data root: " + offlineRoot.getFullPathName());
+        }
+
+        auto destDir = cwd.getChildFile("cli_output");
+        if (! client.setDestinationDirectory(destDir))
+            throw std::runtime_error("Failed to set destination directory: " + destDir.getFullPathName().toStdString());
+
         auto labels = client.siteLabels();
         Logger::writeToLog("Sites: " + String(labels.size()));
 
@@ -24,19 +37,29 @@ int main()
             juce::Logger::writeToLog(message);
         };
 
-        auto listing = client.listAudioObjectsForGroup(siteCode, groupName, logFn);
-        client.writeAudioListingDebugFiles(listing);
-
-        Logger::writeToLog("Listing prefix: " + listing.prefix);
-        Logger::writeToLog("Total listed=" + String(listing.totalListed)
-                           + ", kept=" + String((int) listing.uniqueObjects.size()));
-
-        Logger::writeToLog("First kept objects:");
-        for (size_t i = 0; i < std::min<size_t>(12, listing.uniqueObjects.size()); ++i)
+        auto groups = client.listProductGroups(siteCode, {}, logFn);
+        const sanctsound::ProductGroup* targetGroup = nullptr;
+        for (auto& g : groups)
         {
-            auto label = juce::String((int) (i + 1)).paddedLeft('0', 2);
-            Logger::writeToLog("  [" + label + "] " + listing.uniqueObjects[i]);
+            if (g.name == groupName)
+            {
+                targetGroup = &g;
+                break;
+            }
         }
+
+        if (targetGroup == nullptr)
+            throw std::runtime_error("Group not found: " + groupName.toStdString());
+
+        auto preview = client.previewGroup(siteCode, *targetGroup, false, logFn);
+
+        Logger::writeToLog("CSV windows=" + String(preview.windows.size())
+                           + ", matched=" + String(preview.matchedWindows)
+                           + ", unique_files=" + String(preview.files.size()));
+
+        Logger::writeToLog("First 10 matched objects:");
+        for (int i = 0; i < juce::jmin<int>(10, preview.urls.size()); ++i)
+            Logger::writeToLog("  " + preview.urls[i]);
 
         Logger::writeToLog("SanctSound CLI parity check complete");
         return 0;

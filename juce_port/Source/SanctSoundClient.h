@@ -21,6 +21,13 @@ class SanctSoundClient
 public:
     using LogFn = std::function<void(const juce::String&)>;
 
+    struct AudioSpan
+    {
+        juce::String object;
+        juce::Time start;
+        juce::Time end;
+    };
+
     struct AudioListingResult
     {
         juce::String prefix;
@@ -29,7 +36,7 @@ public:
         juce::StringArray sampleAll;
         juce::StringArray sampleKept;
         juce::StringArray sampleDropped;
-        std::vector<std::pair<juce::String, juce::String>> droppedPairs;
+        std::vector<AudioSpan> spans;
     };
 
     SanctSoundClient();
@@ -54,11 +61,12 @@ public:
                                bool onlyLongRuns,
                                LogFn log) const;
 
+    void setOfflineDataRoot(const juce::File& directory);
+    const juce::File& getOfflineDataRoot() const;
+
     AudioListingResult listAudioObjectsForGroup(const juce::String& site,
                                                 const juce::String& groupName,
                                                 LogFn log) const;
-
-    void writeAudioListingDebugFiles(const AudioListingResult& listing) const;
 
     void downloadFiles(const juce::StringArray& urls, LogFn log) const;
 
@@ -77,6 +85,9 @@ private:
     int clipSampleRate = 48000;
     bool clipMono = true;
     juce::String clipSampleFormat = "s16";
+
+    juce::File offlineDataRoot;
+    bool offlineEnabled = false;
 };
 
 } // namespace sanctsound

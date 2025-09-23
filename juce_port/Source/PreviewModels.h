@@ -51,6 +51,10 @@ struct PreviewResult
     juce::Array<PreviewWindow> windows;
     juce::StringArray urls;
     juce::StringArray names;
+    int matchedWindows = 0;
+    int unmatchedWindows = 0;
+    juce::StringArray matchedObjects;
+    juce::StringArray unmatchedSummaries;
 };
 
 struct ClipRow
