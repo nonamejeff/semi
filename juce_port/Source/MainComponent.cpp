@@ -399,10 +399,10 @@ void MainComponent::handleListSets()
     {
         auto appendLog = [this](const juce::String& s)
         {
-            if (logWindow)
+            if (logWindow != nullptr)
             {
                 logText.moveCaretToEnd();
-                logText.insertTextAtCaret(s);
+                logText.insertTextAtCaret(s.endsWithChar('\n') ? s : (s + "\n"));
             }
             DBG(s);
             std::cout << s;
@@ -472,10 +472,10 @@ void MainComponent::handlePreview()
     {
         auto appendLog = [this](const juce::String& s)
         {
-            if (logWindow)
+            if (logWindow != nullptr)
             {
                 logText.moveCaretToEnd();
-                logText.insertTextAtCaret(s);
+                logText.insertTextAtCaret(s.endsWithChar('\n') ? s : (s + "\n"));
             }
             DBG(s);
             std::cout << s;
@@ -535,10 +535,10 @@ void MainComponent::handleDownload()
     {
         auto appendLog = [this](const juce::String& s)
         {
-            if (logWindow)
+            if (logWindow != nullptr)
             {
                 logText.moveCaretToEnd();
-                logText.insertTextAtCaret(s);
+                logText.insertTextAtCaret(s.endsWithChar('\n') ? s : (s + "\n"));
             }
             DBG(s);
             std::cout << s;
@@ -596,10 +596,10 @@ void MainComponent::handleClip()
     {
         auto appendLog = [this](const juce::String& s)
         {
-            if (logWindow)
+            if (logWindow != nullptr)
             {
                 logText.moveCaretToEnd();
-                logText.insertTextAtCaret(s);
+                logText.insertTextAtCaret(s.endsWithChar('\n') ? s : (s + "\n"));
             }
             DBG(s);
             std::cout << s;
@@ -650,32 +650,63 @@ void MainComponent::handleClip()
     });
 }
 
+class LogWrapper : public juce::Component
+{
+public:
+    explicit LogWrapper(juce::TextEditor& editor) : ed(editor)
+    {
+        addAndMakeVisible(ed);
+    }
+
+    void resized() override
+    {
+        ed.setBounds(getLocalBounds().reduced(8));
+    }
+
+private:
+    juce::TextEditor& ed;
+};
+
+class LogDocWindow : public juce::DocumentWindow
+{
+public:
+    LogDocWindow(juce::Component* contentToOwn, std::function<void()> onClose)
+        : juce::DocumentWindow("Log",
+                               juce::Colours::black,
+                               juce::DocumentWindow::closeButton),
+          onCloseFn(std::move(onClose))
+    {
+        setUsingNativeTitleBar(true);
+        setResizable(true, true);
+        setContentOwned(contentToOwn, true);
+    }
+
+    void closeButtonPressed() override
+    {
+        setVisible(false);
+        if (onCloseFn) onCloseFn();
+    }
+
+private:
+    std::function<void()> onCloseFn;
+};
+
 void MainComponent::toggleLogWindow()
 {
     if (logWindow == nullptr)
     {
         logText.setMultiLine(true);
         logText.setReadOnly(true);
-        logText.setScrollbarsShown(true);
+        logText.setScrollbarsShown(true, true);
         logText.setFont(juce::Font(13.0f));
 
-        auto* wrapper = new juce::Component();
-        wrapper->addAndMakeVisible(logText);
-        wrapper->onResize = [this, wrapper]
-        {
-            logText.setBounds(wrapper->getLocalBounds().reduced(8));
-        };
+        auto* wrapper = new LogWrapper(logText);
 
-        logWindow = std::make_unique<juce::DocumentWindow>(
-            "Log", juce::Colours::black, juce::DocumentWindow::closeButton);
-        logWindow->setUsingNativeTitleBar(true);
-        logWindow->setResizable(true, true);
-        logWindow->setContentOwned(wrapper, false);
-        logWindow->centreWithSize(800, 500);
-        logWindow->onCloseButton = [this]
-        {
+        logWindow.reset(new LogDocWindow(wrapper, [this] {
             logWindow.reset();
-        };
+        }));
+
+        logWindow->centreWithSize(800, 500);
     }
 
     logWindow->setVisible(true);
@@ -708,12 +739,18 @@ void MainComponent::setStatus(const juce::String& status)
 void MainComponent::logMessage(const juce::String& message)
 {
     std::cout << message << std::flush;
-    if (logWindow)
+
+    auto appendLog = [this](const juce::String& s)
     {
-        logText.moveCaretToEnd();
-        logText.insertTextAtCaret(message);
-    }
-    DBG(message);
+        if (logWindow != nullptr)
+        {
+            logText.moveCaretToEnd();
+            logText.insertTextAtCaret(s.endsWithChar('\n') ? s : (s + "\n"));
+        }
+        DBG(s);
+    };
+
+    appendLog(message);
 }
 
 void MainComponent::runInBackground(std::function<void()> task)
@@ -734,10 +771,10 @@ void MainComponent::onGroupInfo(int index)
     {
         auto appendLog = [this](const juce::String& s)
         {
-            if (logWindow)
+            if (logWindow != nullptr)
             {
                 logText.moveCaretToEnd();
-                logText.insertTextAtCaret(s);
+                logText.insertTextAtCaret(s.endsWithChar('\n') ? s : (s + "\n"));
             }
             DBG(s);
             std::cout << s;
