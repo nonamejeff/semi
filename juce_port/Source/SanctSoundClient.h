@@ -42,7 +42,7 @@ public:
     SanctSoundClient();
 
     bool setDestinationDirectory(const juce::File& directory);
-    const juce::File& getDestinationDirectory() const;
+    juce::File getDestinationDirectory() const;
 
     juce::StringArray siteLabels() const;
     juce::String codeForLabel(const juce::String& label) const;
@@ -68,7 +68,8 @@ public:
                                                 const juce::String& groupName,
                                                 LogFn log) const;
 
-    void downloadFiles(const juce::StringArray& urls, LogFn log) const;
+    void downloadFiles(const juce::StringArray& urls,
+                       const std::function<void(const juce::String&)>& log) const;
 
     ClipSummary clipGroups(const juce::Array<juce::String>& groups,
                            const std::map<juce::String, PreviewCache>& cache,
@@ -80,33 +81,36 @@ private:
     {
         juce::String url;
         juce::String fname;
-        juce::Time start;
-        juce::Time end;
+        juce::Time   startUTC;
+        juce::Time   endUTC;
         juce::String folder;
     };
 
     static bool parseTimeUTC(const juce::String& text, juce::Time& out);
-    static juce::Optional<juce::Time> parseAudioStartFromName(const juce::String& name);
+    static std::vector<std::pair<juce::Time, juce::Time>> parseEventsFromCsv(const juce::File& localCsv);
+    static std::vector<juce::Time> parsePresenceHoursFromCsv(const juce::File& localCsv);
+    static std::vector<juce::Time> parsePresenceDaysFromCsv(const juce::File& localCsv);
     static juce::String folderFromSet(const juce::String& setName);
-    static std::vector<HourRow> buildHoursFromRows(std::vector<HourRow> rows);
-    static std::pair<juce::StringArray, juce::StringArray> minimalUnionForWindows(const std::vector<HourRow>& files,
-                                                                                 const std::vector<std::pair<juce::Time, juce::Time>>& windows,
-                                                                                 juce::StringArray& mappingRows);
-
-    std::vector<std::pair<juce::Time, juce::Time>> parseEventsFromCsv(const juce::File& localCsv) const;
-    std::vector<juce::Time> parsePresenceHoursFromCsv(const juce::File& localCsv) const;
-    std::vector<juce::Time> parsePresenceDaysFromCsv(const juce::File& localCsv) const;
-    std::vector<juce::String> listSiteDeployments(const juce::String& site, LogFn log) const;
+    static bool parseAudioStartFromName(const juce::String& name, juce::Time& outUTC);
+    std::vector<juce::String> listSiteDeployments(const juce::String& site,
+                                                  const std::function<void(const juce::String&)>& log) const;
     std::vector<HourRow> listAudioFilesInFolder(const juce::String& site,
                                                 const juce::String& folder,
-                                                const juce::Time& tmin,
-                                                const juce::Time& tmax,
-                                                LogFn log) const;
+                                                juce::Optional<juce::Time> tmin,
+                                                juce::Optional<juce::Time> tmax,
+                                                const std::function<void(const juce::String&)>& log) const;
+    static void buildHoursFromRows(std::vector<HourRow>& rows);
     std::vector<HourRow> listAudioFilesAcross(const juce::String& site,
                                               const juce::String& preferredFolder,
-                                              const juce::Time& tmin,
-                                              const juce::Time& tmax,
-                                              LogFn log) const;
+                                              juce::Optional<juce::Time> tmin,
+                                              juce::Optional<juce::Time> tmax,
+                                              const std::function<void(const juce::String&)>& log) const;
+    static void minimalUnionForWindows(const std::vector<HourRow>& files,
+                                       const std::vector<std::pair<juce::Time, juce::Time>>& windows,
+                                       juce::StringArray& outUrls,
+                                       juce::StringArray& outNames);
+    static int runAndStream(const juce::StringArray& args,
+                            const std::function<void(const juce::String&)>& log);
 
     juce::File destinationDir;
 
