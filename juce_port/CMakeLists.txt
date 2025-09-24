@@ -16,6 +16,12 @@ if (SANCTSOUND_HEADLESS)
 endif()
 add_subdirectory(external/JUCE)
 
+# Headless / CLI build switch (safe in containers)
+option(SANCTSOUND_BUILD_CLI "Build a headless CLI target for container tests" ON)
+if (SANCTSOUND_BUILD_CLI)
+  add_subdirectory(cli)
+endif()
+
 # Common sources (non-GUI)
 set(SANCT_CORE_SOURCES
     Source/SanctSoundClient.cpp

@@ -77,13 +77,19 @@ public:
                            const juce::StringArray& selectedBasenames,
                            LogFn log) const;
 
+    // === Parsing helpers (public, used by GUI & CLI) ===
+    static bool parseAudioStartFromName(const juce::String& filename, juce::Time& outUTC);
+    /** Returns "sanctsound_ci01_02" from "sanctsound_ci01_02_*" (lowercased),
+        or empty string if no match. */
+    static juce::String folderFromSetName(const juce::String& setName);
+
+    friend struct AudioHourSorter;
+
 private:
     static bool parseTimeUTC(const juce::String& text, juce::Time& out);
     static std::vector<std::pair<juce::Time, juce::Time>> parseEventsFromCsv(const juce::File& localCsv);
     static std::vector<juce::Time> parsePresenceHoursFromCsv(const juce::File& localCsv);
     static std::vector<juce::Time> parsePresenceDaysFromCsv(const juce::File& localCsv);
-    static juce::String folderFromSet(const juce::String& setName);
-    static bool parseAudioStartFromName(const juce::String& name, juce::Time& outUTC);
     struct AudioHour
     {
         juce::URL url;
