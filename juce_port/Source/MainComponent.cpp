@@ -603,29 +603,24 @@ void MainComponent::handleClip()
 
 void MainComponent::toggleLogWindow()
 {
-    if (logWindow != nullptr)
+    if (logWindow == nullptr)
     {
-        logWindow->setVisible(false);
-        logWindow.reset();
-        logEditor.reset();
-        return;
+        logWindow = std::make_unique<juce::DocumentWindow>(
+            "Log", juce::Colours::black, juce::DocumentWindow::allButtons, true);
+        logText = std::make_unique<juce::TextEditor>();
+        logText->setMultiLine(true);
+        logText->setReadOnly(true);
+        logText->setScrollbarsShown(true);
+        logWindow->setUsingNativeTitleBar(true);
+        logWindow->setResizable(true, true);
+        logWindow->setContentOwned(logText.get(), false);
+        logWindow->centreWithSize(700, 420);
     }
 
-    auto editor = std::make_unique<juce::TextEditor>();
-    editor->setMultiLine(true);
-    editor->setReadOnly(true);
-    editor->setScrollbarsShown(true);
-    editor->setText("Log window\n", false);
-
-    auto window = std::make_unique<juce::DocumentWindow>("Log", juce::Colours::lightgrey, juce::DocumentWindow::closeButton);
-    window->setUsingNativeTitleBar(true);
-    window->setResizable(true, true);
-    window->setContentOwned(editor.get(), true);
-    window->centreWithSize(480, 360);
-    window->setVisible(true);
-
-    logEditor = std::move(editor);
-    logWindow = std::move(window);
+    const bool shouldShow = ! logWindow->isVisible();
+    logWindow->setVisible(shouldShow);
+    if (shouldShow)
+        logWindow->toFront(true);
 }
 
 void MainComponent::populateSiteCombo()
@@ -654,10 +649,10 @@ void MainComponent::setStatus(const juce::String& status)
 void MainComponent::logMessage(const juce::String& message)
 {
     std::cout << message << std::flush;
-    if (logEditor != nullptr)
+    if (logText != nullptr)
     {
-        logEditor->moveCaretToEnd();
-        logEditor->insertTextAtCaret(message);
+        logText->moveCaretToEnd();
+        logText->insertTextAtCaret(message);
     }
 }
 

@@ -86,7 +86,7 @@ private:
     juce::Label selectionLabel;
 
     std::unique_ptr<juce::DocumentWindow> logWindow;
-    std::unique_ptr<juce::TextEditor> logEditor;
+    std::unique_ptr<juce::TextEditor> logText;
 
     std::vector<GroupEntry> groups;
     std::vector<FileEntry> files;

@@ -3,6 +3,7 @@
 #include <juce_core/juce_core.h>
 #include <functional>
 #include <map>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -77,40 +78,47 @@ public:
                            LogFn log) const;
 
 private:
-    struct HourRow
-    {
-        juce::String url;
-        juce::String fname;
-        juce::String folder;
-        juce::Time   startUTC;
-        juce::Time   endUTC;
-    };
-
     static bool parseTimeUTC(const juce::String& text, juce::Time& out);
     static std::vector<std::pair<juce::Time, juce::Time>> parseEventsFromCsv(const juce::File& localCsv);
     static std::vector<juce::Time> parsePresenceHoursFromCsv(const juce::File& localCsv);
     static std::vector<juce::Time> parsePresenceDaysFromCsv(const juce::File& localCsv);
     static juce::String folderFromSet(const juce::String& setName);
     static bool parseAudioStartFromName(const juce::String& name, juce::Time& outUTC);
-    std::vector<juce::String> listSiteDeployments(const juce::String& site,
-                                                  const std::function<void(const juce::String&)>& log) const;
-    std::vector<HourRow> listAudioFilesInFolder(const juce::String& site,
-                                                const juce::String& folder,
-                                                juce::Optional<juce::Time> tmin,
-                                                juce::Optional<juce::Time> tmax,
-                                                const std::function<void(const juce::String&)>& log,
-                                                juce::String* commandOut = nullptr,
-                                                juce::StringArray* linesOut = nullptr) const;
-    static void buildHoursFromRows(std::vector<HourRow>& rows);
-    std::vector<HourRow> listAudioFilesAcross(const juce::String& site,
-                                              const juce::String& preferredFolder,
-                                              juce::Optional<juce::Time> tmin,
-                                              juce::Optional<juce::Time> tmax,
-                                              const std::function<void(const juce::String&)>& log) const;
-    static void minimalUnionForWindows(const std::vector<HourRow>& files,
+    struct AudioHour
+    {
+        juce::URL url;
+        juce::String fname;
+        juce::Time start;
+        juce::Time end;
+        juce::String folder;
+    };
+
+    juce::StringArray listDeploymentsForSite(const juce::String& site,
+                                             const std::function<void(const juce::String&)>& log) const;
+    juce::Array<AudioHour> listAudioInFolder(const juce::String& site,
+                                             const juce::String& folder,
+                                             std::optional<juce::Time> tmin,
+                                             std::optional<juce::Time> tmax,
+                                             const std::function<void(const juce::String&)>& log) const;
+    juce::Array<AudioHour> listAudioAcross(const juce::String& site,
+                                          const juce::String& preferFolder,
+                                          std::optional<juce::Time> tmin,
+                                          std::optional<juce::Time> tmax,
+                                          const std::function<void(const juce::String&)>& log) const;
+    struct NeededFileRow
+    {
+        juce::Time start;
+        juce::Time end;
+        juce::String names;
+        juce::String urls;
+    };
+
+    static void minimalFilesForWindows(const juce::Array<AudioHour>& files,
                                        const std::vector<std::pair<juce::Time, juce::Time>>& windows,
                                        juce::StringArray& outUrls,
-                                       juce::StringArray& outNames);
+                                       juce::StringArray& outNames,
+                                       juce::Array<NeededFileRow>& rows,
+                                       int& unmatchedCount);
     static int runAndStream(const juce::StringArray& args,
                             const std::function<void(const juce::String&)>& log);
 
