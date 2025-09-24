@@ -16,7 +16,6 @@
 #include <utility>
 #include <unordered_map>
 #include <unordered_set>
-#include <regex>
 #include <set>
 #include <limits>
 #include <vector>
@@ -605,9 +604,9 @@ struct HourRow
 {
     juce::String url;
     juce::String fname;
+    juce::String folder;
     juce::Time   startUTC;
     juce::Time   endUTC;
-    juce::String folder;
 };
 
 struct LocalAudio
@@ -870,63 +869,46 @@ static juce::Time normaliseToDay(const juce::Time& t)
     return juce::Time(snapped);
 }
 
-static juce::Optional<juce::Time> parseAudioStartFromNameImpl(const juce::String& name)
+static bool parseAudioStartFromName(const juce::String& name, juce::Time& outUTC)
 {
-    static const std::regex pattern("_(?:(\\d{8}T\\d{6}Z)|(\\d{12}))\\.(?:flac|wav)$", std::regex::icase);
+    static const juce::RegExp re1("_([0-9]{8}T[0-9]{6}Z)\\.(flac|wav)$", true);
+    static const juce::RegExp re2("_([0-9]{12})\\.(flac|wav)$", true);
 
-    auto trimmed = name.trim();
-    if (trimmed.isEmpty())
-        return {};
-
-    std::smatch match;
-    auto text = trimmed.toStdString();
-    if (! std::regex_search(text, match, pattern))
-        return {};
-
-    if (match[1].matched)
+    juce::String m;
+    if (re1.fullMatch(name, &m))
     {
-        auto iso = juce::String(match[1].str());
-        auto parsed = juce::Time::fromISO8601(iso);
-        if (parsed == juce::Time())
-            return {};
-        return parsed;
+        auto ts = m; // YYYYMMDDThhmmssZ
+        int y = ts.substring(0, 4).getIntValue();
+        int M = ts.substring(4, 6).getIntValue();
+        int d = ts.substring(6, 8).getIntValue();
+        int h = ts.substring(9, 11).getIntValue();
+        int n = ts.substring(11, 13).getIntValue();
+        int s = ts.substring(13, 15).getIntValue();
+        outUTC = juce::Time(juce::Time::convertedToUTC({ y, M, d, h, n, s }));
+        return true;
     }
-
-    if (match[2].matched)
+    else if (re2.fullMatch(name, &m))
     {
-        auto digits = match[2].str();
-        if (digits.length() != 12)
-            return {};
-
-        auto safeSlice = [&](int start, int length)
-        {
-            return juce::String(digits.substr((size_t) start, (size_t) length)).getIntValue();
-        };
-
-        int yy = safeSlice(0, 2);
-        int year = yy <= 69 ? 2000 + yy : 1900 + yy;
-        int month = safeSlice(2, 2);
-        int day = safeSlice(4, 2);
-        int hour = safeSlice(6, 2);
-        int minute = safeSlice(8, 2);
-        int second = safeSlice(10, 2);
-
-        if (month < 1 || month > 12 || day < 1 || day > 31)
-            return {};
-
-        return juce::Time(year, month, day, hour, minute, second, 0, false);
+        auto ts = m; // YYMMDDhhmmss
+        int yy  = ts.substring(0, 2).getIntValue();
+        int yr  = (yy <= 69 ? 2000 + yy : 1900 + yy);
+        int M   = ts.substring(2, 4).getIntValue();
+        int d   = ts.substring(4, 6).getIntValue();
+        int h   = ts.substring(6, 8).getIntValue();
+        int n   = ts.substring(8, 10).getIntValue();
+        int s   = ts.substring(10, 12).getIntValue();
+        outUTC = juce::Time(juce::Time::convertedToUTC({ yr, M, d, h, n, s }));
+        return true;
     }
-
-    return {};
+    return false;
 }
 
-static juce::String folderFromSetImpl(const juce::String& setName)
+static juce::String folderFromSet(const juce::String& setName)
 {
-    static const std::regex pattern("(sanctsound_[a-z]{2}\\d{2}_\\d{2})", std::regex::icase);
-    std::smatch match;
-    auto text = setName.toStdString();
-    if (std::regex_search(text, match, pattern))
-        return juce::String(match[1].str()).toLowerCase();
+    static const juce::RegExp re("(sanctsound_[a-z]{2}[0-9]{2}_[0-9]{2})", true);
+    juce::String m;
+    if (re.fullMatch(setName.toLowerCase(), &m))
+        return m;
     return {};
 }
 
@@ -937,16 +919,12 @@ bool SanctSoundClient::parseTimeUTC(const juce::String& text, juce::Time& out)
 
 bool SanctSoundClient::parseAudioStartFromName(const juce::String& name, juce::Time& outUTC)
 {
-    auto opt = parseAudioStartFromNameImpl(name);
-    if (! opt.hasValue())
-        return false;
-    outUTC = *opt;
-    return true;
+    return ::sanctsound::parseAudioStartFromName(name, outUTC);
 }
 
 juce::String SanctSoundClient::folderFromSet(const juce::String& setName)
 {
-    return folderFromSetImpl(setName);
+    return ::sanctsound::folderFromSet(setName);
 }
 
 juce::Array<PreviewWindow> groupConsecutive(const juce::Array<juce::Time>& points, const juce::RelativeTime& step)
@@ -1266,24 +1244,27 @@ std::vector<std::pair<juce::Time, juce::Time>> SanctSoundClient::parseEventsFrom
 
 void SanctSoundClient::buildHoursFromRows(std::vector<HourRow>& rows)
 {
-    if (rows.empty())
-        return;
+    std::sort(rows.begin(), rows.end(),
+              [](const HourRow& a, const HourRow& b)
+              {
+                  if (timeLessThan(a.startUTC, b.startUTC))
+                      return true;
+                  if (timeLessThan(b.startUTC, a.startUTC))
+                      return false;
+                  return a.folder.compareIgnoreCase(b.folder) < 0;
+              });
 
     for (size_t i = 0; i < rows.size(); ++i)
     {
         if (i + 1 < rows.size() && rows[i + 1].folder.equalsIgnoreCase(rows[i].folder))
         {
-            auto end = rows[i + 1].startUTC;
-            if (! timeLessThan(rows[i].startUTC, end))
-                end = rows[i].startUTC + juce::RelativeTime::seconds(1);
-            rows[i].endUTC = end;
+            rows[i].endUTC = rows[i + 1].startUTC;
+            if (! timeLessThan(rows[i].startUTC, rows[i].endUTC))
+                rows[i].endUTC = rows[i].startUTC + juce::RelativeTime::seconds(1);
         }
         else
         {
-            auto end = rows[i].startUTC + juce::RelativeTime::hours(1);
-            if (! timeLessThan(rows[i].startUTC, end))
-                end = rows[i].startUTC + juce::RelativeTime::seconds(1);
-            rows[i].endUTC = end;
+            rows[i].endUTC = rows[i].startUTC + juce::RelativeTime::hours(1);
         }
     }
 }
@@ -1379,81 +1360,62 @@ std::vector<juce::String> SanctSoundClient::listSiteDeployments(const juce::Stri
                                                                const std::function<void(const juce::String&)>& log) const
 {
     std::vector<juce::String> deployments;
-    auto trimmedSite = site.trim();
-    if (trimmedSite.isEmpty())
+
+    auto siteCode = site.trim().toLowerCase();
+    if (siteCode.isEmpty())
         return deployments;
 
-    if (offlineEnabled)
-    {
-        auto indexDir = offlineDataRoot.getChildFile("audio_index");
-        if (indexDir.isDirectory())
-        {
-            juce::DirectoryIterator iter(indexDir, false, trimmedSite + "__*.json", juce::File::findFiles);
-            while (iter.next())
-            {
-                auto file = iter.getFile();
-                auto base = file.getFileNameWithoutExtension();
-                if (! base.startsWithIgnoreCase(trimmedSite + "__"))
-                    continue;
-                auto folder = base.substring(trimmedSite.length() + 2);
-                if (folder.isNotEmpty())
-                    deployments.push_back(folder.toLowerCase());
-            }
-        }
-    }
-    else
-    {
-        auto prefix = audioPrefix;
-        if (! prefix.endsWithChar('/'))
-            prefix << "/";
+    juce::String prefix = audioPrefix;
+    if (! prefix.endsWithChar('/'))
+        prefix << "/";
 
-        juce::String base = "gs://" + gcsBucket + "/" + prefix + trimmedSite + "/";
-        juce::StringArray args { "gsutil", "ls", base };
+    juce::String base = "gs://" + gcsBucket + "/" + prefix + siteCode + "/";
+
+    juce::StringArray cmd { "gsutil", "ls", base };
+    if (log)
+        log("LIST deployments: " + cmd.joinIntoString(" ") + "\n");
+
+    juce::ChildProcess process;
+    if (! process.start(cmd))
+    {
         if (log)
-            log("$ " + formatCommand(args));
-        auto result = runCommand(args);
-        if (result.exitCode != 0 && result.exitCode != 1)
-            throw std::runtime_error(humaniseError(formatCommand(args), result).toStdString());
-
-        for (auto& line : result.lines)
-        {
-            if (log && line.isNotEmpty())
-                log(line);
-            auto text = line.trim();
-            if (! text.startsWithIgnoreCase("gs://"))
-                continue;
-            if (! text.endsWithChar('/'))
-                continue;
-            auto withoutSlash = text.substring(0, text.length() - 1);
-            auto lastSlash = withoutSlash.lastIndexOfChar('/');
-            if (lastSlash < 0)
-                continue;
-            auto folder = withoutSlash.substring(lastSlash + 1);
-            if (folder.startsWithIgnoreCase("sanctsound_"))
-                deployments.push_back(folder.toLowerCase());
-        }
+            log("Failed to start gsutil\n");
+        return deployments;
     }
 
-    std::sort(deployments.begin(), deployments.end(), [](const juce::String& a, const juce::String& b)
-    {
-        return a.compareIgnoreCase(b) < 0;
-    });
+    juce::String allOutput = process.readAllProcessOutput();
+    int exitCode = process.waitForProcessToFinish(-1);
+    if (log)
+        log("deployments exit: " + juce::String(exitCode) + "\n");
 
-    deployments.erase(std::unique(deployments.begin(), deployments.end(), [](const juce::String& a, const juce::String& b)
+    juce::StringArray lines;
+    lines.addLines(allOutput);
+    if (log)
+        log("deployments lines: " + juce::String(lines.size()) + "\n");
+
+    for (auto& line : lines)
     {
-        return a.equalsIgnoreCase(b);
-    }), deployments.end());
+        juce::String trimmed = line.trim();
+        if (! trimmed.startsWithIgnoreCase("gs://"))
+            continue;
+        if (! trimmed.endsWithChar('/'))
+            continue;
+
+        auto withoutSlash = trimmed.substring(0, trimmed.length() - 1);
+        auto lastSlash = withoutSlash.lastIndexOfChar('/');
+        if (lastSlash < 0)
+            continue;
+
+        juce::String name = withoutSlash.substring(lastSlash + 1).toLowerCase();
+        if (name.startsWithIgnoreCase("sanctsound_"))
+            deployments.push_back(name);
+    }
+
+    std::sort(deployments.begin(), deployments.end());
+    deployments.erase(std::unique(deployments.begin(), deployments.end()), deployments.end());
 
     if (log)
-    {
-        juce::StringArray list;
-        for (auto& d : deployments)
-            list.add(d);
-        if (list.isEmpty())
-            log("Deployments seen under site: <none>");
-        else
-            log("Deployments seen under site: " + list.joinIntoString(", "));
-    }
+        log("deployments kept: " + juce::String((int) deployments.size()) + "\n");
 
     return deployments;
 }
@@ -1462,108 +1424,143 @@ std::vector<SanctSoundClient::HourRow> SanctSoundClient::listAudioFilesInFolder(
                                                                                 const juce::String& folder,
                                                                                 juce::Optional<juce::Time> tmin,
                                                                                 juce::Optional<juce::Time> tmax,
-                                                                                const std::function<void(const juce::String&)>& log) const
+                                                                                const std::function<void(const juce::String&)>& log,
+                                                                                juce::String* commandOut,
+                                                                                juce::StringArray* linesOut) const
 {
     std::vector<HourRow> rows;
-    auto trimmedSite = site.trim();
-    auto trimmedFolder = folder.trim();
-    if (trimmedSite.isEmpty() || trimmedFolder.isEmpty())
+
+    auto siteCode = site.trim().toLowerCase();
+    auto folderName = folder.trim().toLowerCase();
+    if (siteCode.isEmpty() || folderName.isEmpty())
         return rows;
 
-    juce::Optional<HourRow> leftCandidate;
+    juce::String prefix = audioPrefix;
+    if (! prefix.endsWithChar('/'))
+        prefix << "/";
 
-    auto considerUrl = [&](const juce::String& rawUrl)
+    juce::String pattern = "gs://" + gcsBucket + "/" + prefix + siteCode + "/" + folderName + "/audio/*.flac";
+    juce::StringArray cmd { "gsutil", "ls", "-r", pattern };
+    juce::String cmdString = cmd.joinIntoString(" ");
+    if (commandOut)
+        *commandOut = cmdString;
+    if (log)
+        log("LIST audio: " + cmdString + "\n");
+
+    juce::ChildProcess process;
+    if (! process.start(cmd))
     {
-        auto trimmed = rawUrl.trim();
-        if (trimmed.isEmpty())
-            return;
-
-        juce::String url = trimmed;
-        if (! url.startsWithIgnoreCase("gs://"))
-        {
-            auto cleaned = url.trimCharactersAtStart("/");
-            url = "gs://" + gcsBucket + "/" + cleaned;
-        }
-
-        auto fname = url.fromLastOccurrenceOf("/", false, false);
-        if (fname.isEmpty())
-            return;
-
-        juce::Time start;
-        if (! parseAudioStartFromName(fname, start))
-            return;
-
-        if (tmin.hasValue() && timeLessThan(start, *tmin))
-        {
-            if (! leftCandidate.hasValue() || timeLessThan(leftCandidate->startUTC, start))
-                leftCandidate = HourRow { url, fname, start, {}, trimmedFolder };
-            return;
-        }
-
-        if (tmax.hasValue() && timeLessThan(*tmax, start))
-            return;
-
-        rows.push_back({ url, fname, start, {}, trimmedFolder });
-    };
-
-    if (offlineEnabled)
-    {
-        auto indexFile = offlineDataRoot.getChildFile("audio_index")
-                                       .getChildFile(trimmedSite + "__" + trimmedFolder + ".json");
-        auto parsed = readJsonFile(indexFile);
-        if (auto* arr = parsed.getArray())
-        {
-            for (auto& value : *arr)
-                if (value.isString())
-                    considerUrl(value.toString());
-        }
-        else if (parsed.isString())
-        {
-            considerUrl(parsed.toString());
-        }
-    }
-    else
-    {
-        auto prefix = audioPrefix;
-        if (! prefix.endsWithChar('/'))
-            prefix << "/";
-        juce::String pattern = "gs://" + gcsBucket + "/" + prefix + trimmedSite + "/" + trimmedFolder + "/audio/*.flac";
-        juce::StringArray args { "gsutil", "ls", "-r", pattern };
         if (log)
-            log("$ " + formatCommand(args));
-        auto result = runCommand(args);
-        if (result.exitCode != 0 && result.exitCode != 1)
-            throw std::runtime_error(humaniseError(formatCommand(args), result).toStdString());
+            log("Failed to start gsutil\n");
+        return rows;
+    }
 
-        for (auto& line : result.lines)
+    juce::String output = process.readAllProcessOutput();
+    int exitCode = process.waitForProcessToFinish(-1);
+    if (log)
+        log("audio exit: " + juce::String(exitCode) + "\n");
+
+    juce::StringArray lines;
+    lines.addLines(output);
+    if (linesOut)
+    {
+        linesOut->clear();
+        auto limit = juce::jmin(50, lines.size());
+        for (int i = 0; i < limit; ++i)
+            linesOut->add(lines[i]);
+    }
+    if (log)
+        log("audio lines: " + juce::String(lines.size()) + "\n");
+
+    HourRow leftCandidate{};
+    bool haveLeft = false;
+    int parsed = 0;
+    int kept = 0;
+    int skippedBefore = 0;
+    int skippedAfter = 0;
+    int skippedNoTimestamp = 0;
+    int skippedOther = 0;
+
+    for (auto& line : lines)
+    {
+        juce::String url = line.trim();
+        if (! url.startsWith("gs://"))
         {
-            if (log && line.isNotEmpty())
-                log(line);
-            auto text = line.trim();
-            if (! text.startsWithIgnoreCase("gs://"))
-                continue;
-            if (! text.endsWithIgnoreCase(".flac"))
-                continue;
-            considerUrl(text);
+            if (url.isNotEmpty())
+                ++skippedOther;
+            continue;
+        }
+
+        if (! url.endsWithIgnoreCase(".flac"))
+        {
+            ++skippedOther;
+            continue;
+        }
+
+        ++parsed;
+
+        juce::String fname = url.fromLastOccurrenceOf("/", false, false);
+        juce::Time startUTC;
+        if (! parseAudioStartFromName(fname, startUTC))
+        {
+            ++skippedNoTimestamp;
+            if (log)
+                log("skip (no ts): " + fname + "\n");
+            continue;
+        }
+
+        if (tmin.hasValue() && timeLessThan(startUTC, *tmin))
+        {
+            ++skippedBefore;
+            if (! haveLeft || timeLessThan(leftCandidate.startUTC, startUTC))
+            {
+                leftCandidate = { url, fname, folderName, startUTC, {} };
+                haveLeft = true;
+            }
+            if (log)
+                log("skip (before tmin): " + fname + " start=" + toIso(startUTC) + "\n");
+            continue;
+        }
+
+        if (tmax.hasValue() && timeLessThan(*tmax, startUTC))
+        {
+            ++skippedAfter;
+            if (log)
+                log("skip (after tmax): " + fname + " start=" + toIso(startUTC) + "\n");
+            continue;
+        }
+
+        rows.push_back({ url, fname, folderName, startUTC, {} });
+        ++kept;
+    }
+
+    if (haveLeft)
+    {
+        auto diff = tmin.hasValue()
+                    ? (tmin->toMilliseconds() - leftCandidate.startUTC.toMilliseconds())
+                    : std::numeric_limits<juce::int64>::max();
+        if (diff >= 0 && diff <= (juce::int64) (6 * 3600 * 1000))
+        {
+            if (log)
+                log("include left-boundary: " + leftCandidate.fname + "\n");
+            rows.push_back(leftCandidate);
+            ++kept;
         }
     }
-
-    if (leftCandidate.hasValue())
-    {
-        if (! tmin.hasValue() || ((*tmin - leftCandidate->startUTC) <= juce::RelativeTime::hours(6)))
-            rows.push_back(*leftCandidate);
-    }
-
-    std::sort(rows.begin(), rows.end(), [](const HourRow& a, const HourRow& b)
-    {
-        if (timeLessThan(a.startUTC, b.startUTC))
-            return true;
-        if (timeLessThan(b.startUTC, a.startUTC))
-            return false;
-        return a.folder.compareIgnoreCase(b.folder) < 0;
-    });
 
     buildHoursFromRows(rows);
+
+    if (log)
+    {
+        log("audio stats parsed=" + juce::String(parsed)
+            + " kept=" + juce::String(kept)
+            + " before=" + juce::String(skippedBefore)
+            + " after=" + juce::String(skippedAfter)
+            + " no-ts=" + juce::String(skippedNoTimestamp)
+            + " other=" + juce::String(skippedOther) + "\n");
+        log("kept audio rows: " + juce::String((int) rows.size()) + "\n");
+    }
+
     return rows;
 }
 
@@ -1574,7 +1571,9 @@ std::vector<SanctSoundClient::HourRow> SanctSoundClient::listAudioFilesAcross(co
                                                                               const std::function<void(const juce::String&)>& log) const
 {
     std::vector<HourRow> allRows;
-    auto deployments = listSiteDeployments(site, log);
+
+    auto siteCode = site.trim().toLowerCase();
+    auto deployments = listSiteDeployments(siteCode, log);
 
     std::vector<juce::String> ordered;
     if (preferredFolder.isNotEmpty())
@@ -1588,9 +1587,23 @@ std::vector<SanctSoundClient::HourRow> SanctSoundClient::listAudioFilesAcross(co
     if (ordered.empty())
         ordered = deployments;
 
+    struct DebugInfo
+    {
+        juce::String folder;
+        juce::String command;
+        juce::StringArray lines;
+    };
+
+    std::vector<DebugInfo> debug;
+    debug.reserve(ordered.size());
+
     for (auto& folderName : ordered)
     {
-        auto rows = listAudioFilesInFolder(site, folderName, tmin, tmax, log);
+        juce::String cmd;
+        juce::StringArray rawLines;
+        auto rows = listAudioFilesInFolder(siteCode, folderName, tmin, tmax, log, &cmd, &rawLines);
+        if (cmd.isNotEmpty() || ! rawLines.isEmpty())
+            debug.push_back({ folderName, cmd, rawLines });
         allRows.insert(allRows.end(), rows.begin(), rows.end());
     }
 
@@ -1602,6 +1615,41 @@ std::vector<SanctSoundClient::HourRow> SanctSoundClient::listAudioFilesAcross(co
             return false;
         return a.folder.compareIgnoreCase(b.folder) < 0;
     });
+
+    if (log)
+        log("files across (total): " + juce::String((int) allRows.size()) + "\n");
+
+    if (allRows.empty() && log)
+    {
+        if (debug.empty())
+        {
+            log("files across: no gsutil commands captured\n");
+        }
+        else
+        {
+            for (size_t i = 0; i < debug.size(); ++i)
+            {
+                const auto& info = debug[i];
+                juce::String header = "files across: command[" + juce::String((int) (i + 1)) + "] ";
+                if (info.folder.isNotEmpty())
+                    header += "[" + info.folder + "] ";
+                header += info.command;
+                log(header + "\n");
+
+                if (info.lines.isEmpty())
+                {
+                    log("  (no output captured)\n");
+                    continue;
+                }
+
+                int limit = juce::jmin(10, info.lines.size());
+                for (int j = 0; j < limit; ++j)
+                    log("  " + info.lines[j] + "\n");
+                if (info.lines.size() > limit)
+                    log("  ... (" + juce::String(info.lines.size() - limit) + " more lines)\n");
+            }
+        }
+    }
 
     return allRows;
 }
@@ -1691,12 +1739,11 @@ juce::Array<AudioReference> buildAudioReferencesFromObjects(const std::vector<ju
         auto url = makeGsUrl(bucket, objectName);
         auto name = objectName.fromLastOccurrenceOf("/", false, false);
 
-        auto startOpt = parseAudioStartFromNameImpl(name);
-        if (! startOpt)
+        juce::Time start;
+        if (! parseAudioStartFromName(name, start))
             continue;
 
-        auto start = *startOpt;
-        juce::String folder = folderFromSetImpl(name);
+        juce::String folder = folderFromSet(name);
         if (folder.isEmpty())
             folder = fallbackFolder;
 
@@ -2395,7 +2442,15 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
 
     result.mode = mode;
 
+    auto siteCode = site.trim().toLowerCase();
     auto preferredFolder = folderFromSet(group.name);
+
+    if (log)
+    {
+        juce::String msg = "preview: site=" + siteCode + " prefFolder="
+                            + (preferredFolder.isNotEmpty() ? preferredFolder : juce::String("<none>"));
+        log(msg + "\n");
+    }
 
     auto bestFiles = chooseBestFiles(group.paths);
     auto downloaded = downloadFilesTo(bestFiles, destinationDir, offlineDataRoot, log);
@@ -2532,11 +2587,19 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     }
 
     if (log)
-        log("CSV windows parsed: " + juce::String((int) windows.size()));
+        log("CSV windows parsed: " + juce::String((int) windows.size()) + "\n");
+
+    if (log)
+    {
+        juce::String tminText = tmin.hasValue() ? toIso(*tmin) : juce::String("<none>");
+        juce::String tmaxText = tmax.hasValue() ? toIso(*tmax) : juce::String("<none>");
+        log("window summary count=" + juce::String((int) windows.size())
+            + " tmin=" + tminText + " tmax=" + tmaxText + "\n");
+    }
 
     std::vector<HourRow> audioRows;
     if (! windows.empty())
-        audioRows = listAudioFilesAcross(site, preferredFolder, tmin, tmax, log);
+        audioRows = listAudioFilesAcross(siteCode, preferredFolder, tmin, tmax, log);
     if (log)
         log("Audio rows collected: " + juce::String((int) audioRows.size()));
 
