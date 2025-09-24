@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
+#include <cstdio>
 #include <map>
 #include <memory>
 #include <regex>
@@ -1177,105 +1178,173 @@ std::vector<juce::Time> SanctSoundClient::parsePresenceDaysFromCsv(const juce::F
     return days;
 }
 
-std::vector<std::pair<juce::Time, juce::Time>> SanctSoundClient::parseEventsFromCsv(const juce::File& file)
+namespace
 {
-    auto csv = readCsvLoose(file);
-    if (csv.header.isEmpty())
-        return {};
 
-    const int startCol = detectDatetimeColumn(csv.header, csv.rows);
-    if (startCol < 0)
-        throw std::runtime_error("No usable datetime column in " + file.getFileName().toStdString());
+static bool parseIsoOrPlainUTC(const juce::String& value, juce::Time& out)
+{
+    auto s = value.trim();
+    if (s.isEmpty())
+        return false;
 
-    const int maxCols = maxColumnCount(csv.header, csv.rows);
-    const int minHits = std::max(1, std::min((int) csv.rows.size(), std::max(3, (int) std::ceil(csv.rows.size() * 0.05))));
-
-    int endCol = -1;
-    for (int col = 0; col < maxCols; ++col)
+    if (s.containsChar('T'))
     {
-        if (col == startCol)
-            continue;
-        if (col < csv.header.size() && headerLooksLikeEnd(csv.header[col]) && countDatetimeHits(col, csv.rows) > 0)
+        auto iso = juce::Time::fromISO8601(s);
+        if (iso.toMilliseconds() != 0)
         {
-            endCol = col;
-            break;
+            out = iso;
+            return true;
         }
     }
 
-    if (endCol < 0)
+    int Y = 0, M = 0, D = 0, h = 0, m = 0, sec = 0;
+    if (std::sscanf(s.toRawUTF8(), "%d-%d-%d %d:%d:%d", &Y, &M, &D, &h, &m, &sec) == 6
+        || std::sscanf(s.toRawUTF8(), "%d/%d/%d %d:%d:%d", &Y, &M, &D, &h, &m, &sec) == 6)
     {
-        for (int col = 0; col < maxCols; ++col)
+        out = makeUtc(Y, M, D, h, m, sec);
+        return out.toMilliseconds() != 0;
+    }
+
+    if (std::sscanf(s.toRawUTF8(), "%d-%d-%d", &Y, &M, &D) == 3)
+    {
+        out = makeUtc(Y, M, D, 0, 0, 0);
+        return out.toMilliseconds() != 0;
+    }
+
+    return false;
+}
+
+} // namespace
+
+bool SanctSoundClient::parseEventsFromCsv(const juce::File& csvFile, juce::Array<EventWindow>& out)
+{
+    out.clearQuick();
+
+    if (! csvFile.existsAsFile())
+        return false;
+
+    juce::FileInputStream in(csvFile);
+    if (! in.openedOk())
+        return false;
+
+    auto header = in.readNextLine();
+    if (header.isEmpty())
+        return false;
+
+    juce::StringArray columns;
+    columns.addTokens(header, ",", "\"");
+    for (int i = 0; i < columns.size(); ++i)
+        columns.set(i, columns[i].trim());
+    columns.removeEmptyStrings(true);
+
+    auto findColumn = [&columns](std::initializer_list<const char*> keys) -> int
+    {
+        for (int idx = 0; idx < columns.size(); ++idx)
         {
-            if (col == startCol)
-                continue;
-            if (countDatetimeHits(col, csv.rows) >= minHits)
+            auto lower = columns[idx].toLowerCase();
+            for (auto* key : keys)
             {
-                endCol = col;
-                break;
+                if (lower.contains(juce::String(key).toLowerCase()))
+                    return idx;
             }
         }
-    }
+        return -1;
+    };
 
-    const int durationCol = findDurationColumn(csv.header);
-    std::set<std::pair<juce::int64, juce::int64>> seen;
-    std::vector<std::pair<juce::Time, juce::Time>> events;
+    const int startIdx = findColumn({ "start", "timestamp", "time", "utc" });
+    const int endIdx   = findColumn({ "end" });
+    const int durIdx   = findColumn({ "duration", "dur", "length" });
 
-    for (auto& row : csv.rows)
+    if (startIdx < 0)
+        return false;
+
+    std::vector<EventWindow> events;
+
+    constexpr double kFallbackSeconds = 60.0;
+
+    while (! in.isExhausted())
     {
-        if (startCol >= row.size())
+        auto line = in.readNextLine();
+        if (line.isEmpty())
             continue;
 
-        juce::Time start;
-        if (! parseTimeUTC(row[startCol], start))
+        juce::StringArray row;
+        row.addTokens(line, ",", "\"");
+
+        if (row.size() <= startIdx)
             continue;
 
-        juce::Time end;
+        juce::Time startUTC;
+        if (! parseIsoOrPlainUTC(row[startIdx], startUTC))
+            continue;
+
+        juce::Time endUTC;
         bool haveEnd = false;
 
-        if (endCol >= 0 && endCol < row.size())
-            haveEnd = parseTimeUTC(row[endCol], end);
-
-        if (! haveEnd && durationCol >= 0 && durationCol < row.size())
-        {
-            auto field = row[durationCol].trim();
-            if (field.isNotEmpty() && isNumeric(field))
-            {
-                auto seconds = field.getDoubleValue();
-                if (seconds > 0.0)
-                {
-                    end = start + juce::RelativeTime::seconds(seconds);
-                    haveEnd = true;
-                }
-            }
-        }
+        if (endIdx >= 0 && endIdx < row.size())
+            haveEnd = parseIsoOrPlainUTC(row[endIdx], endUTC);
 
         if (! haveEnd)
-            end = start + juce::RelativeTime::seconds(60.0);
+        {
+            double seconds = kFallbackSeconds;
+            if (durIdx >= 0 && durIdx < row.size())
+            {
+                auto raw = row[durIdx].trim();
+                if (raw.isNotEmpty())
+                {
+                    double candidate = raw.getDoubleValue();
+                    if (candidate > 0.0)
+                    {
+                        seconds = candidate;
+                    }
+                    else if (raw.containsIgnoreCase("PT") && raw.endsWithIgnoreCase("S"))
+                    {
+                        auto inside = raw.fromFirstOccurrenceOf("PT", false, false)
+                                          .upToLastOccurrenceOf("S", false, false);
+                        candidate = inside.getDoubleValue();
+                        if (candidate > 0.0)
+                            seconds = candidate;
+                    }
+                    else if (raw.containsChar(':'))
+                    {
+                        int hh = 0, mm = 0, ss = 0;
+                        if (std::sscanf(raw.toRawUTF8(), "%d:%d:%d", &hh, &mm, &ss) == 3)
+                            seconds = hh * 3600.0 + mm * 60.0 + ss;
+                    }
+                }
+            }
 
-        if (! timeLessThan(start, end))
-            continue;
+            endUTC = startUTC + juce::RelativeTime::seconds(seconds);
+        }
 
-        auto key = std::make_pair(start.toMilliseconds(), end.toMilliseconds());
-        if (seen.insert(key).second)
-            events.emplace_back(start, end);
+        if (endUTC <= startUTC)
+            endUTC = startUTC + juce::RelativeTime::seconds(kFallbackSeconds);
+
+        events.push_back({ startUTC, endUTC });
     }
 
-    std::sort(events.begin(), events.end(), [](const auto& a, const auto& b)
+    if (events.empty())
+        return false;
+
+    std::sort(events.begin(), events.end(), [](const EventWindow& a, const EventWindow& b)
     {
-        if (timeLessThan(a.first, b.first))
-            return true;
-        if (timeLessThan(b.first, a.first))
-            return false;
-        return timeLessThan(a.second, b.second);
+        auto sa = a.startUTC.toMilliseconds();
+        auto sb = b.startUTC.toMilliseconds();
+        if (sa != sb)
+            return sa < sb;
+        return a.endUTC.toMilliseconds() < b.endUTC.toMilliseconds();
     });
 
-    events.erase(std::unique(events.begin(), events.end(), [](const auto& a, const auto& b)
+    events.erase(std::unique(events.begin(), events.end(), [](const EventWindow& a, const EventWindow& b)
     {
-        return a.first.toMilliseconds() == b.first.toMilliseconds()
-            && a.second.toMilliseconds() == b.second.toMilliseconds();
+        return a.startUTC.toMilliseconds() == b.startUTC.toMilliseconds()
+            && a.endUTC.toMilliseconds() == b.endUTC.toMilliseconds();
     }), events.end());
 
-    return events;
+    for (const auto& evt : events)
+        out.add(evt);
+
+    return ! out.isEmpty();
 }
 
 int SanctSoundClient::runAndStream(const juce::StringArray& args,
@@ -2508,34 +2577,41 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     }
     else
     {
-        std::vector<std::pair<juce::Time, juce::Time>> combinedEvents;
-        std::set<std::pair<juce::int64, juce::int64>> seenEvents;
+        std::vector<EventWindow> combinedEvents;
         for (auto& csv : localCsvs)
         {
-            auto events = parseEventsFromCsv(csv);
-            for (auto& evt : events)
+            juce::Array<EventWindow> parsed;
+            if (SanctSoundClient::parseEventsFromCsv(csv, parsed))
             {
-                auto key = std::make_pair(evt.first.toMilliseconds(), evt.second.toMilliseconds());
-                if (seenEvents.insert(key).second)
+                for (const auto& evt : parsed)
                     combinedEvents.push_back(evt);
             }
         }
 
-        std::sort(combinedEvents.begin(), combinedEvents.end(), [](const auto& a, const auto& b)
+        std::sort(combinedEvents.begin(), combinedEvents.end(), [](const EventWindow& a, const EventWindow& b)
         {
-            if (timeLessThan(a.first, b.first))
-                return true;
-            if (timeLessThan(b.first, a.first))
-                return false;
-            return timeLessThan(a.second, b.second);
+            auto sa = a.startUTC.toMilliseconds();
+            auto sb = b.startUTC.toMilliseconds();
+            if (sa != sb)
+                return sa < sb;
+            return a.endUTC.toMilliseconds() < b.endUTC.toMilliseconds();
         });
 
-        windows = combinedEvents;
+        combinedEvents.erase(std::unique(combinedEvents.begin(), combinedEvents.end(), [](const EventWindow& a, const EventWindow& b)
+        {
+            return a.startUTC.toMilliseconds() == b.startUTC.toMilliseconds()
+                && a.endUTC.toMilliseconds() == b.endUTC.toMilliseconds();
+        }), combinedEvents.end());
+
+        windows.clear();
+        windows.reserve(combinedEvents.size());
+        for (const auto& evt : combinedEvents)
+            windows.emplace_back(evt.startUTC, evt.endUTC);
 
         if (! combinedEvents.empty())
         {
-            tmin = combinedEvents.front().first;
-            tmax = combinedEvents.back().second;
+            tmin = combinedEvents.front().startUTC;
+            tmax = combinedEvents.back().endUTC;
         }
 
         runsText << "Events: " << combinedEvents.size() << "\n";
@@ -2617,7 +2693,16 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     }
     result.unmatchedSummaries = unmatchedSummaries;
 
-    result.summary = group.name + " | Events: " + juce::String((int) windows.size())
+    juce::String countLabel("events");
+    if (mode == "HOUR")
+        countLabel = "hours";
+    else if (mode == "DAY")
+        countLabel = "days";
+
+    const juce::String modeLabel = mode.toLowerCase();
+
+    result.summary = group.name + " | mode: " + modeLabel
+                   + " | " + countLabel + ": " + juce::String((int) windows.size())
                    + " | unique files: " + juce::String(names.size());
 
     juce::Array<ListedFile> listed;
