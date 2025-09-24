@@ -40,6 +40,12 @@ public:
         std::vector<AudioSpan> spans;
     };
 
+    struct EventWindow
+    {
+        juce::Time startUTC;
+        juce::Time endUTC;
+    };
+
     SanctSoundClient();
 
     bool setDestinationDirectory(const juce::File& directory);
@@ -83,11 +89,12 @@ public:
         or empty string if no match. */
     static juce::String folderFromSetName(const juce::String& setName);
 
+    static bool parseEventsFromCsv(const juce::File& csvFile, juce::Array<EventWindow>& out);
+
     friend struct AudioHourSorter;
 
 private:
     static bool parseTimeUTC(const juce::String& text, juce::Time& out);
-    static std::vector<std::pair<juce::Time, juce::Time>> parseEventsFromCsv(const juce::File& localCsv);
     static std::vector<juce::Time> parsePresenceHoursFromCsv(const juce::File& localCsv);
     static std::vector<juce::Time> parsePresenceDaysFromCsv(const juce::File& localCsv);
     struct AudioHour

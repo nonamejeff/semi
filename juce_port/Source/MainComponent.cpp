@@ -8,6 +8,7 @@
 #include <juce_gui_extra/juce_gui_extra.h>
 #include <utility>
 #include <thread>
+#include <iostream>
 
 namespace sanctsound
 {
@@ -396,10 +397,22 @@ void MainComponent::handleListSets()
 
     runInBackground([this, site, tag]()
     {
+        auto appendLog = [this](const juce::String& s)
+        {
+            if (logWindow)
+            {
+                logText.moveCaretToEnd();
+                logText.insertTextAtCaret(s);
+            }
+            DBG(s);
+            std::cout << s;
+            std::cout.flush();
+        };
+
         try
         {
             auto groupsResult = client.listProductGroups(site, tag,
-                [this](const juce::String& msg) { logMessage(msg + "\n"); });
+                [appendLog](const juce::String& msg) { appendLog(msg + "\n"); });
 
             juce::MessageManager::callAsync([this, groupsResult]() mutable
             {
@@ -457,6 +470,18 @@ void MainComponent::handlePreview()
 
     runInBackground([this, site, onlyLong, groupsToPreview = std::move(groupsToPreview)]() mutable
     {
+        auto appendLog = [this](const juce::String& s)
+        {
+            if (logWindow)
+            {
+                logText.moveCaretToEnd();
+                logText.insertTextAtCaret(s);
+            }
+            DBG(s);
+            std::cout << s;
+            std::cout.flush();
+        };
+
         for (size_t idx = 0; idx < groupsToPreview.size(); ++idx)
         {
             const auto& group = groupsToPreview[idx];
@@ -464,9 +489,9 @@ void MainComponent::handlePreview()
 
             try
             {
-                logMessage("\n=== Preview " + name + " ===\n");
+                appendLog("\n=== Preview " + name + " ===\n");
                 auto preview = client.previewGroup(site, group, onlyLong,
-                    [this](const juce::String& msg) { logMessage(msg + "\n"); });
+                    [appendLog](const juce::String& msg) { appendLog(msg + "\n"); });
 
                 auto isLast = (idx + 1 == groupsToPreview.size());
                 juce::MessageManager::callAsync([this, name, preview, isLast]() mutable
@@ -508,9 +533,21 @@ void MainComponent::handleDownload()
 
     runInBackground([this, urls]()
     {
+        auto appendLog = [this](const juce::String& s)
+        {
+            if (logWindow)
+            {
+                logText.moveCaretToEnd();
+                logText.insertTextAtCaret(s);
+            }
+            DBG(s);
+            std::cout << s;
+            std::cout.flush();
+        };
+
         try
         {
-            client.downloadFiles(urls, [this](const juce::String& msg) { logMessage(msg + "\n"); });
+            client.downloadFiles(urls, [appendLog](const juce::String& msg) { appendLog(msg + "\n"); });
             juce::MessageManager::callAsync([this]()
             {
                 downloadButton.setEnabled(true);
@@ -557,10 +594,22 @@ void MainComponent::handleClip()
 
     runInBackground([this, selectedArr, basenamesArr]()
     {
+        auto appendLog = [this](const juce::String& s)
+        {
+            if (logWindow)
+            {
+                logText.moveCaretToEnd();
+                logText.insertTextAtCaret(s);
+            }
+            DBG(s);
+            std::cout << s;
+            std::cout.flush();
+        };
+
         try
         {
             auto summary = client.clipGroups(selectedArr, previewCache, basenamesArr,
-                                             [this](const juce::String& msg) { logMessage(msg + "\n"); });
+                                             [appendLog](const juce::String& msg) { appendLog(msg + "\n"); });
             juce::MessageManager::callAsync([this, summary]()
             {
                 clipButton.setEnabled(true);
@@ -605,22 +654,32 @@ void MainComponent::toggleLogWindow()
 {
     if (logWindow == nullptr)
     {
+        logText.setMultiLine(true);
+        logText.setReadOnly(true);
+        logText.setScrollbarsShown(true);
+        logText.setFont(juce::Font(13.0f));
+
+        auto* wrapper = new juce::Component();
+        wrapper->addAndMakeVisible(logText);
+        wrapper->onResize = [this, wrapper]
+        {
+            logText.setBounds(wrapper->getLocalBounds().reduced(8));
+        };
+
         logWindow = std::make_unique<juce::DocumentWindow>(
-            "Log", juce::Colours::black, juce::DocumentWindow::allButtons, true);
-        logText = std::make_unique<juce::TextEditor>();
-        logText->setMultiLine(true);
-        logText->setReadOnly(true);
-        logText->setScrollbarsShown(true);
+            "Log", juce::Colours::black, juce::DocumentWindow::closeButton);
         logWindow->setUsingNativeTitleBar(true);
         logWindow->setResizable(true, true);
-        logWindow->setContentOwned(logText.get(), false);
-        logWindow->centreWithSize(700, 420);
+        logWindow->setContentOwned(wrapper, false);
+        logWindow->centreWithSize(800, 500);
+        logWindow->onCloseButton = [this]
+        {
+            logWindow.reset();
+        };
     }
 
-    const bool shouldShow = ! logWindow->isVisible();
-    logWindow->setVisible(shouldShow);
-    if (shouldShow)
-        logWindow->toFront(true);
+    logWindow->setVisible(true);
+    logWindow->toFront(true);
 }
 
 void MainComponent::populateSiteCombo()
@@ -649,11 +708,12 @@ void MainComponent::setStatus(const juce::String& status)
 void MainComponent::logMessage(const juce::String& message)
 {
     std::cout << message << std::flush;
-    if (logText != nullptr)
+    if (logWindow)
     {
-        logText->moveCaretToEnd();
-        logText->insertTextAtCaret(message);
+        logText.moveCaretToEnd();
+        logText.insertTextAtCaret(message);
     }
+    DBG(message);
 }
 
 void MainComponent::runInBackground(std::function<void()> task)
@@ -672,11 +732,23 @@ void MainComponent::onGroupInfo(int index)
 
     runInBackground([this, site, groupName]()
     {
+        auto appendLog = [this](const juce::String& s)
+        {
+            if (logWindow)
+            {
+                logText.moveCaretToEnd();
+                logText.insertTextAtCaret(s);
+            }
+            DBG(s);
+            std::cout << s;
+            std::cout.flush();
+        };
+
         try
         {
             juce::String raw;
             auto summary = client.fetchMetadataSummary(site, groupName, raw,
-                [this](const juce::String& msg) { logMessage(msg + "\n"); });
+                [appendLog](const juce::String& msg) { appendLog(msg + "\n"); });
 
             juce::MessageManager::callAsync([this, summary, raw]()
             {
