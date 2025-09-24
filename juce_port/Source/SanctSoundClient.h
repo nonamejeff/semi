@@ -81,9 +81,9 @@ private:
     {
         juce::String url;
         juce::String fname;
+        juce::String folder;
         juce::Time   startUTC;
         juce::Time   endUTC;
-        juce::String folder;
     };
 
     static bool parseTimeUTC(const juce::String& text, juce::Time& out);
@@ -98,7 +98,9 @@ private:
                                                 const juce::String& folder,
                                                 juce::Optional<juce::Time> tmin,
                                                 juce::Optional<juce::Time> tmax,
-                                                const std::function<void(const juce::String&)>& log) const;
+                                                const std::function<void(const juce::String&)>& log,
+                                                juce::String* commandOut = nullptr,
+                                                juce::StringArray* linesOut = nullptr) const;
     static void buildHoursFromRows(std::vector<HourRow>& rows);
     std::vector<HourRow> listAudioFilesAcross(const juce::String& site,
                                               const juce::String& preferredFolder,
