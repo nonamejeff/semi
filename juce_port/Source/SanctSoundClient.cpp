@@ -11,6 +11,7 @@
 #include <cmath>
 #include <map>
 #include <memory>
+#include <regex>
 #include <string>
 #include <stdexcept>
 #include <utility>
@@ -19,6 +20,32 @@
 #include <set>
 #include <limits>
 #include <vector>
+#include <ctime>
+
+static time_t portable_timegm(std::tm* tm)
+{
+#if defined(_WIN32)
+    return _mkgmtime(tm);
+#else
+    // On macOS / BSD / glibc this is present; no extra defines required.
+    return timegm(tm);
+#endif
+}
+
+static juce::Time makeUtcTime(int year, int month, int day,
+                              int hour, int minute, int second)
+{
+    std::tm tm {};
+    tm.tm_year = year - 1900;
+    tm.tm_mon  = month - 1;
+    tm.tm_mday = day;
+    tm.tm_hour = hour;
+    tm.tm_min  = minute;
+    tm.tm_sec  = second;
+    time_t secs = portable_timegm(&tm);
+    if (secs < 0) secs = 0;
+    return juce::Time((juce::int64) secs * 1000);
+}
 
 namespace sanctsound
 {
@@ -871,25 +898,26 @@ static juce::Time normaliseToDay(const juce::Time& t)
 
 static bool parseAudioStartFromName(const juce::String& name, juce::Time& outUTC)
 {
-    static const juce::RegExp re1("_([0-9]{8}T[0-9]{6}Z)\\.(flac|wav)$", true);
-    static const juce::RegExp re2("_([0-9]{12})\\.(flac|wav)$", true);
+    static const std::regex re1("_([0-9]{8}T[0-9]{6}Z)\\.(flac|wav)$", std::regex::icase);
+    static const std::regex re2("_([0-9]{12})\\.(flac|wav)$", std::regex::icase);
 
-    juce::String m;
-    if (re1.fullMatch(name, &m))
+    std::smatch match;
+    const std::string text = name.toStdString();
+    if (std::regex_search(text, match, re1))
     {
-        auto ts = m; // YYYYMMDDThhmmssZ
+        juce::String ts(match[1].str()); // YYYYMMDDThhmmssZ
         int y = ts.substring(0, 4).getIntValue();
         int M = ts.substring(4, 6).getIntValue();
         int d = ts.substring(6, 8).getIntValue();
         int h = ts.substring(9, 11).getIntValue();
         int n = ts.substring(11, 13).getIntValue();
         int s = ts.substring(13, 15).getIntValue();
-        outUTC = juce::Time(juce::Time::convertedToUTC({ y, M, d, h, n, s }));
+        outUTC = makeUtcTime(y, M, d, h, n, s);
         return true;
     }
-    else if (re2.fullMatch(name, &m))
+    else if (std::regex_search(text, match, re2))
     {
-        auto ts = m; // YYMMDDhhmmss
+        juce::String ts(match[1].str()); // YYMMDDhhmmss
         int yy  = ts.substring(0, 2).getIntValue();
         int yr  = (yy <= 69 ? 2000 + yy : 1900 + yy);
         int M   = ts.substring(2, 4).getIntValue();
@@ -897,7 +925,7 @@ static bool parseAudioStartFromName(const juce::String& name, juce::Time& outUTC
         int h   = ts.substring(6, 8).getIntValue();
         int n   = ts.substring(8, 10).getIntValue();
         int s   = ts.substring(10, 12).getIntValue();
-        outUTC = juce::Time(juce::Time::convertedToUTC({ yr, M, d, h, n, s }));
+        outUTC = makeUtcTime(yr, M, d, h, n, s);
         return true;
     }
     return false;
@@ -905,10 +933,11 @@ static bool parseAudioStartFromName(const juce::String& name, juce::Time& outUTC
 
 static juce::String folderFromSet(const juce::String& setName)
 {
-    static const juce::RegExp re("(sanctsound_[a-z]{2}[0-9]{2}_[0-9]{2})", true);
-    juce::String m;
-    if (re.fullMatch(setName.toLowerCase(), &m))
-        return m;
+    static const std::regex re("(sanctsound_[a-z]{2}[0-9]{2}_[0-9]{2})", std::regex::icase);
+    std::smatch match;
+    const std::string lowered = setName.toLowerCase().toStdString();
+    if (std::regex_search(lowered, match, re))
+        return juce::String(match[1].str());
     return {};
 }
 
@@ -1372,8 +1401,9 @@ std::vector<juce::String> SanctSoundClient::listSiteDeployments(const juce::Stri
     juce::String base = "gs://" + gcsBucket + "/" + prefix + siteCode + "/";
 
     juce::StringArray cmd { "gsutil", "ls", base };
+    auto cmdString = cmd.joinIntoString(" ");
     if (log)
-        log("LIST deployments: " + cmd.joinIntoString(" ") + "\n");
+        log("LIST deployments: " + cmdString + "\n");
 
     juce::ChildProcess process;
     if (! process.start(cmd))
@@ -1415,7 +1445,11 @@ std::vector<juce::String> SanctSoundClient::listSiteDeployments(const juce::Stri
     deployments.erase(std::unique(deployments.begin(), deployments.end()), deployments.end());
 
     if (log)
+    {
         log("deployments kept: " + juce::String((int) deployments.size()) + "\n");
+        log("deployments summary: cmd='" + cmdString + "' exit="
+            + juce::String(exitCode) + " lines=" + juce::String(lines.size()) + "\n");
+    }
 
     return deployments;
 }
@@ -1559,6 +1593,23 @@ std::vector<SanctSoundClient::HourRow> SanctSoundClient::listAudioFilesInFolder(
             + " no-ts=" + juce::String(skippedNoTimestamp)
             + " other=" + juce::String(skippedOther) + "\n");
         log("kept audio rows: " + juce::String((int) rows.size()) + "\n");
+        log("audio summary: cmd='" + cmdString + "' exit="
+            + juce::String(exitCode) + " lines=" + juce::String(lines.size()) + "\n");
+        if (kept == 0)
+        {
+            log("audio sample site='" + siteCode + "' folder='" + folderName
+                + "' pattern='" + pattern + "'\n");
+            auto previewCount = juce::jmin(10, lines.size());
+            if (previewCount == 0)
+            {
+                log("  (no gsutil output)\n");
+            }
+            else
+            {
+                for (int i = 0; i < previewCount; ++i)
+                    log("  " + lines[i] + "\n");
+            }
+        }
     }
 
     return rows;
