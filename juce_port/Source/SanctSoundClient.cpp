@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <ctime>
 #include <map>
 #include <memory>
 #include <regex>
@@ -22,13 +23,24 @@
 #include <vector>
 #include <optional>
 
-// Make a UTC juce::Time from Y,M,D,h,m,s
-static juce::Time makeUTC(int Y, int M, int D, int h, int m, int s)
+namespace
 {
-    auto t = juce::Time(Y, M, D, h, m, s, true);
-    // Ensure it's treated as UTC: store milliseconds since epoch of UTC
-    return juce::Time(t.toMilliseconds() - juce::Time::getCurrentTimezoneOffset() * 1000);
+
+// Make a juce::Time from UTC components safely
+static juce::Time makeUtc(int year, int mon, int day, int hh, int mm, int ss)
+{
+    std::tm tm{}; tm.tm_year = year - 1900; tm.tm_mon = mon - 1; tm.tm_mday = day;
+    tm.tm_hour = hh; tm.tm_min = mm; tm.tm_sec = ss;
+#if JUCE_WINDOWS
+    const auto t = _mkgmtime(&tm);
+#else
+    const auto t = timegm(&tm);
+#endif
+    if (t == -1) return juce::Time((juce::int64) 0);
+    return juce::Time((juce::int64) t * 1000);
 }
+
+} // anonymous
 
 namespace sanctsound
 {
@@ -870,50 +882,53 @@ static juce::Time normaliseToDay(const juce::Time& t)
     return juce::Time(snapped);
 }
 
-// Extract UTC start from audio filename: "…_YYYYMMDDThhmmssZ.flac" or "…_YYMMDDhhmmss.flac"
-static std::optional<juce::Time> parseAudioStartFromNameOpt(const juce::String& name)
+bool sanctsound::SanctSoundClient::parseAudioStartFromName(const juce::String& filename, juce::Time& outUTC)
 {
-    static const std::regex re1(R"(_([0-9]{8}T[0-9]{6}Z)\.(?:flac|wav)$)", std::regex::icase);
-    static const std::regex re2(R"(_([0-9]{12})\.(?:flac|wav)$)", std::regex::icase);
-    std::smatch match;
-    std::string text = name.toStdString();
+    const std::string s = filename.toStdString();
 
-    if (std::regex_search(text, match, re1))
+    // Pattern 1: ..._YYYYMMDDThhmmssZ.(flac|wav)
+    static const std::regex reIso(R"(_(\d{8})T(\d{6})Z\.(?:flac|wav)$)", std::regex::icase);
+    // Pattern 2: ..._YYMMDDhhmmss.(flac|wav)
+    static const std::regex reShort(R"_(_(\d{12})\.(?:flac|wav)$)_", std::regex::icase);
+
+    std::smatch m;
+    if (std::regex_search(s, m, reIso))
     {
-        const auto ts = match[1].str();
-        int Y = std::stoi(ts.substr(0, 4));
-        int M = std::stoi(ts.substr(4, 2));
-        int D = std::stoi(ts.substr(6, 2));
-        int h = std::stoi(ts.substr(9, 2));
-        int m = std::stoi(ts.substr(11, 2));
-        int s = std::stoi(ts.substr(13, 2));
-        return makeUTC(Y, M, D, h, m, s);
+        const std::string d = m[1], h = m[2];
+        const int year = std::stoi(d.substr(0,4));
+        const int mon  = std::stoi(d.substr(4,2));
+        const int day  = std::stoi(d.substr(6,2));
+        const int hh   = std::stoi(h.substr(0,2));
+        const int mm   = std::stoi(h.substr(2,2));
+        const int ss   = std::stoi(h.substr(4,2));
+        outUTC = makeUtc(year, mon, day, hh, mm, ss);
+        return outUTC.toMilliseconds() != 0;
     }
 
-    if (std::regex_search(text, match, re2))
+    if (std::regex_search(s, m, reShort))
     {
-        const auto ts = match[1].str();
-        int yy = std::stoi(ts.substr(0, 2));
-        int Y  = (yy <= 69 ? 2000 + yy : 1900 + yy);
-        int M  = std::stoi(ts.substr(2, 2));
-        int D  = std::stoi(ts.substr(4, 2));
-        int h  = std::stoi(ts.substr(6, 2));
-        int m  = std::stoi(ts.substr(8, 2));
-        int s  = std::stoi(ts.substr(10, 2));
-        return makeUTC(Y, M, D, h, m, s);
+        const std::string d = m[1]; // YYMMDDhhmmss
+        int yy = std::stoi(d.substr(0,2));
+        const int year = (yy <= 69 ? 2000 + yy : 1900 + yy);
+        const int mon  = std::stoi(d.substr(2,2));
+        const int day  = std::stoi(d.substr(4,2));
+        const int hh   = std::stoi(d.substr(6,2));
+        const int mm   = std::stoi(d.substr(8,2));
+        const int ss   = std::stoi(d.substr(10,2));
+        outUTC = makeUtc(year, mon, day, hh, mm, ss);
+        return outUTC.toMilliseconds() != 0;
     }
 
-    return std::nullopt;
+    return false;
 }
 
-// Lowercased deployment folder like "sanctsound_ci01_02"
-static juce::String folderFromSetName(const juce::String& setName)
+juce::String sanctsound::SanctSoundClient::folderFromSetName(const juce::String& setName)
 {
     static const std::regex re(R"(sanctsound_[a-z]{2}\d{2}_\d{2})", std::regex::icase);
-    std::smatch match;
-    std::string lowered = setName.toStdString();
-    if (std::regex_search(lowered, match, re))
-        return juce::String(match[0].str()).toLowerCase();
+    const std::string s = setName.toStdString();
+    std::smatch m;
+    if (std::regex_search(s, m, re))
+        return juce::String(m.str()).toLowerCase();
     return {};
 }
 
@@ -946,21 +961,6 @@ struct AudioHourSorter
 bool SanctSoundClient::parseTimeUTC(const juce::String& text, juce::Time& out)
 {
     return parseTimeUTCImpl(text, out);
-}
-
-bool SanctSoundClient::parseAudioStartFromName(const juce::String& name, juce::Time& outUTC)
-{
-    if (auto opt = ::sanctsound::parseAudioStartFromNameOpt(name))
-    {
-        outUTC = *opt;
-        return true;
-    }
-    return false;
-}
-
-juce::String SanctSoundClient::folderFromSet(const juce::String& setName)
-{
-    return ::sanctsound::folderFromSetName(setName);
 }
 
 juce::Array<PreviewWindow> groupConsecutive(const juce::Array<juce::Time>& points, const juce::RelativeTime& step)
@@ -1318,7 +1318,7 @@ void SanctSoundClient::minimalFilesForWindows(const juce::Array<AudioHour>& file
     rows.clear();
     unmatchedCount = 0;
 
-    if (files.isEmpty() || windows.isEmpty())
+    if (files.isEmpty() || windows.empty())
         return;
 
     std::vector<juce::int64> starts;
@@ -1695,10 +1695,10 @@ juce::Array<AudioReference> buildAudioReferencesFromObjects(const std::vector<ju
         auto name = objectName.fromLastOccurrenceOf("/", false, false);
 
         juce::Time start;
-        if (! parseAudioStartFromName(name, start))
+        if (! SanctSoundClient::parseAudioStartFromName(name, start))
             continue;
 
-        juce::String folder = folderFromSet(name);
+        juce::String folder = SanctSoundClient::folderFromSetName(name);
         if (folder.isEmpty())
             folder = fallbackFolder;
 
@@ -2398,7 +2398,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
     result.mode = mode;
 
     auto siteCode = site.trim().toLowerCase();
-    auto preferredFolder = folderFromSet(group.name);
+    auto preferredFolder = folderFromSetName(group.name);
 
     if (log)
     {
@@ -2691,7 +2691,7 @@ ClipSummary SanctSoundClient::clipGroups(const juce::Array<juce::String>& groups
         audio.file = src;
         audio.name = base;
         audio.start = parsedStart;
-        audio.folder = folderFromSet(audio.name);
+        audio.folder = folderFromSetName(audio.name);
         local.add(audio);
     }
 
