@@ -1521,9 +1521,67 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioInFolder(con
     if (! prefix.endsWithChar('/'))
         prefix << "/";
 
-    const auto pattern = "gs://" + gcsBucket + "/" + prefix + siteCode + "/" + folderName + "/audio/*.flac";
+    juce::StringArray lines;
+    juce::String pattern;
     int exitCode = 0;
-    auto lines = runAndCollect({ "gsutil", "ls", "-r", pattern }, exitCode);
+
+    if (offlineEnabled)
+    {
+        auto offlineFile = offlineDataRoot.getChildFile("audio_index")
+                                          .getChildFile(siteCode + "__" + folderName + ".json");
+        auto parsed = readJsonFile(offlineFile);
+
+        if (parsed.isVoid() || parsed.isUndefined())
+        {
+            if (log)
+                log("[WARN] Offline audio index missing: " + offlineFile.getFullPathName() + "\n");
+        }
+        else
+        {
+            auto appendObject = [&](const juce::String& objectName)
+            {
+                auto trimmed = objectName.trim();
+                if (trimmed.isEmpty())
+                    return;
+
+                juce::String full = trimmed;
+                if (! full.startsWithIgnoreCase("gs://"))
+                    full = makeGsUrl(gcsBucket, full);
+
+                lines.add(full);
+            };
+
+            if (auto* arr = parsed.getArray())
+            {
+                for (auto& value : *arr)
+                {
+                    if (value.isString())
+                        appendObject(value.toString());
+                }
+            }
+            else if (auto* obj = parsed.getDynamicObject())
+            {
+                for (auto& prop : obj->getProperties())
+                {
+                    if (prop.value.isString())
+                        appendObject(prop.value.toString());
+                }
+            }
+            else if (parsed.isString())
+            {
+                appendObject(parsed.toString());
+            }
+
+            if (log)
+                log("[offline] audio index " + offlineFile.getFullPathName()
+                    + " entries=" + juce::String(lines.size()) + "\n");
+        }
+    }
+    else
+    {
+        pattern = "gs://" + gcsBucket + "/" + prefix + siteCode + "/" + folderName + "/audio/*.flac";
+        lines = runAndCollect({ "gsutil", "ls", "-r", pattern }, exitCode);
+    }
 
     std::optional<AudioHour> left;
     int parsed = 0;
@@ -1591,7 +1649,7 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioInFolder(con
         log("Folder " + folderName + ": exit=" + juce::String(exitCode)
             + " parsed=" + juce::String(parsed)
             + " kept=" + juce::String(out.size()) + "\n");
-        if (exitCode != 0)
+        if (exitCode != 0 && pattern.isNotEmpty())
             log("[WARN] gsutil ls exit " + juce::String(exitCode) + " for " + pattern + "\n");
 
         if (! lines.isEmpty())
