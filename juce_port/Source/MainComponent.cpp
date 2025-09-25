@@ -697,8 +697,12 @@ void MainComponent::toggleLogWindow()
     {
         logText.setMultiLine(true);
         logText.setReadOnly(true);
-        logText.setScrollbarsShown(true, true);
+        logText.setScrollbarsShown(true);
+#if JUCE_MAJOR_VERSION >= 8
+        logText.setFont(juce::Font(juce::FontOptions(13.0f)));
+#else
         logText.setFont(juce::Font(13.0f));
+#endif
 
         auto* wrapper = new LogWrapper(logText);
 
