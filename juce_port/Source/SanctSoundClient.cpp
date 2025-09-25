@@ -24,41 +24,6 @@
 #include <vector>
 #include <optional>
 
-static juce::File ss_makeDebugDir (const juce::File& destDir, const juce::String& setName)
-{
-    auto dbgRoot = destDir.getChildFile("__audio_debug");
-    dbgRoot.createDirectory();
-    auto dbg = dbgRoot.getChildFile("preview_" + setName);
-    dbg.createDirectory();
-
-    auto marker = dbgRoot.getChildFile("LAST_DEBUG_DIR.txt");
-    marker.replaceWithText(dbg.getFullPathName());
-
-    return dbg;
-}
-
-static void ss_dumpLines (const juce::File& outFile, const juce::StringArray& lines)
-{
-    juce::String joined;
-    for (auto& s : lines)
-        joined << s << "\n";
-    outFile.replaceWithText(joined);
-}
-
-static juce::StringArray ss_rowsToUrls (const juce::Array<sanctsound::SanctSoundClient::AudioHour>& rows)
-{
-    juce::StringArray a;
-    for (auto const& r : rows)
-        a.add(r.url.toString(false));
-    return a;
-}
-
-static juce::StringArray ss_stringsToArray (const juce::StringArray& strings)
-{
-    juce::StringArray a(strings);
-    return a;
-}
-
 namespace
 {
 
@@ -1590,6 +1555,34 @@ void SanctSoundClient::minimalFilesForWindows(const juce::Array<AudioHour>& file
     outNames.sort(true);
 }
 
+juce::File SanctSoundClient::makePreviewDebugDir (const juce::File& destDir, const juce::String& setName) const
+{
+    auto dbgRoot = destDir.getChildFile("__audio_debug");
+    dbgRoot.createDirectory();
+
+    auto dbg = dbgRoot.getChildFile("preview_" + setName);
+    dbg.createDirectory();
+
+    dbgRoot.getChildFile("LAST_DEBUG_DIR.txt").replaceWithText(dbg.getFullPathName());
+    return dbg;
+}
+
+juce::StringArray SanctSoundClient::rowsToUrls (const juce::Array<AudioHour>& rows) const
+{
+    juce::StringArray a;
+    for (auto const& r : rows)
+        a.add(r.url.toString(false));
+    return a;
+}
+
+void SanctSoundClient::dumpLines (const juce::File& outFile, const juce::StringArray& lines)
+{
+    juce::String joined;
+    for (auto& s : lines)
+        joined << s << "\n";
+    outFile.replaceWithText(joined);
+}
+
 juce::StringArray SanctSoundClient::listDeploymentsForSite(const juce::String& site,
                                                            const std::function<void(const juce::String&)>& log) const
 {
@@ -2674,7 +2667,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
 
     const juce::String siteLower = siteCode;
     const juce::String setName = group.name;
-    const juce::File dbg = ss_makeDebugDir(destinationDir, setName);
+    const juce::File dbg = makePreviewDebugDir(destinationDir, setName);
     dumpAllAudioForSite(siteLower, dbg);
 
     auto bestFiles = chooseBestFiles(group.paths);
@@ -2874,16 +2867,18 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         }
     }
 
-    ss_dumpLines(dbg.getChildFile("ALL_candidates_urls.txt"),
-                 ss_rowsToUrls(audioRows));
+    dumpLines(dbg.getChildFile("ALL_candidates_urls.txt"),
+              rowsToUrls(audioRows));
 
-    ss_dumpLines(dbg.getChildFile("FILTERED_" + setName + "_urls.txt"),
-                 ss_stringsToArray(urls));
+    juce::StringArray filteredUrls;
+    for (auto const& u : urls)
+        filteredUrls.add(u);
+    dumpLines(dbg.getChildFile("FILTERED_" + setName + "_urls.txt"), filteredUrls);
 
     juce::StringArray filteredNames;
-    for (auto const& u : urls)
+    for (auto const& u : filteredUrls)
         filteredNames.add(juce::URL(u).getFileName());
-    ss_dumpLines(dbg.getChildFile("FILTERED_" + setName + "_basenames.txt"), filteredNames);
+    dumpLines(dbg.getChildFile("FILTERED_" + setName + "_basenames.txt"), filteredNames);
 
     DBG("SanctSound: debug written to: " + dbg.getFullPathName());
 

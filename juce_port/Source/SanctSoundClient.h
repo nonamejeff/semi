@@ -132,6 +132,11 @@ private:
                                        juce::StringArray& outNames,
                                        juce::Array<NeededFileRow>& rows,
                                        int& unmatchedCount);
+
+    juce::File makePreviewDebugDir (const juce::File& destDir, const juce::String& setName) const;
+    juce::StringArray rowsToUrls (const juce::Array<AudioHour>& rows) const;
+    static void dumpLines (const juce::File& outFile, const juce::StringArray& lines);
+
     static int runAndStream(const juce::StringArray& args,
                             const std::function<void(const juce::String&)>& log);
 
