@@ -46,6 +46,12 @@ public:
         juce::Time endUTC;
     };
 
+    struct AudioHour
+    {
+        juce::String url, fname, folder;
+        juce::Time   startUtc, endUtc; // [start, end) in UTC
+    };
+
     SanctSoundClient();
 
     bool setDestinationDirectory(const juce::File& directory);
@@ -84,7 +90,12 @@ public:
                            LogFn log) const;
 
     // === Parsing helpers (public, used by GUI & CLI) ===
-    static bool parseAudioStartFromName(const juce::String& filename, juce::Time& outUTC);
+    // Parse UTC start time from audio filename.
+    // Supports "..._YYYYMMDDThhmmssZ.flac" and "..._YYMMDDhhmmss.flac" at the end.
+    // Returns true on success and writes UTC juce::Time to outUtc.
+    static bool parseAudioStartFromName (const juce::String& fileName, juce::Time& outUtc);
+    // Small helper to format a juce::Time in ISO8601 UTC for logs.
+    static juce::String toIsoUTC (const juce::Time& t);
     /** Returns "sanctsound_ci01_02" from "sanctsound_ci01_02_*" (lowercased),
         or empty string if no match. */
     static juce::String folderFromSetName(const juce::String& setName);
@@ -95,14 +106,6 @@ private:
     static bool parseTimeUTC(const juce::String& text, juce::Time& out);
     static std::vector<juce::Time> parsePresenceHoursFromCsv(const juce::File& localCsv);
     static std::vector<juce::Time> parsePresenceDaysFromCsv(const juce::File& localCsv);
-    struct AudioHour
-    {
-        juce::URL url;
-        juce::String fname;
-        juce::Time start;
-        juce::Time end;
-        juce::String folder;
-    };
 
     struct AudioHourSorter
     {
@@ -115,12 +118,14 @@ private:
                                              const juce::String& folder,
                                              std::optional<juce::Time> tmin,
                                              std::optional<juce::Time> tmax,
-                                             const std::function<void(const juce::String&)>& log) const;
+                                             const std::function<void(const juce::String&)>& log,
+                                             const juce::File& debugDir = {}) const;
     juce::Array<AudioHour> listAudioAcross(const juce::String& site,
                                           const juce::String& preferFolder,
                                           std::optional<juce::Time> tmin,
                                           std::optional<juce::Time> tmax,
-                                          const std::function<void(const juce::String&)>& log) const;
+                                          const std::function<void(const juce::String&)>& log,
+                                          const juce::File& debugDir = {}) const;
     struct NeededFileRow
     {
         juce::Time start;
@@ -134,7 +139,8 @@ private:
                                        juce::StringArray& outUrls,
                                        juce::StringArray& outNames,
                                        juce::Array<NeededFileRow>& rows,
-                                       int& unmatchedCount);
+                                       int& unmatchedCount,
+                                       const juce::File& debugDir = {});
 
     juce::File makePreviewDebugDir (const juce::File& destDir, const juce::String& setName) const;
     juce::StringArray rowsToUrls (const juce::Array<AudioHour>& rows) const;
