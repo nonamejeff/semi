@@ -150,6 +150,117 @@ static juce::String normKey(const juce::String& name)
     return name.toLowerCase().removeCharacters("\r\n");
 }
 
+// ---------- AUDIO DEBUG DUMPS (no logic changes; just logging) ----------
+static juce::File ensureDebugDir(const juce::File& root, const juce::String& tag)
+{
+    auto d = root.getChildFile("__audio_debug").getChildFile(tag);
+    d.createDirectory();
+    return d;
+}
+
+static void writeLines(const juce::File& f, const juce::StringArray& lines)
+{
+    f.deleteFile();
+    f.create();
+    f.appendText(lines.joinIntoString("\n") + "\n");
+}
+
+static juce::StringArray runAndCapture(const juce::StringArray& cmd, int& exitCode)
+{
+    juce::StringArray out;
+    juce::ChildProcess p;
+    exitCode = -999;
+    if (!p.start(cmd)) return out;
+
+    juce::MemoryOutputStream buffer;
+    for (;;)
+    {
+        char tmp[8192];
+        const int n = p.readProcessOutput(tmp, sizeof(tmp));
+        if (n <= 0) break;
+        buffer.write(tmp, (size_t)n);
+    }
+    exitCode = p.waitForProcessToFinish(120000);
+    out.addLines(buffer.toString());
+    return out;
+}
+
+// List deployment folders: gs://.../audio/<site>/ → keep entries that end with '/'
+static juce::StringArray gcsListFolders(const juce::String& siteLower, int& lsExit)
+{
+    juce::StringArray cmd { "gsutil", "ls", "gs://noaa-passive-bioacoustic/sanctsound/audio/" + siteLower + "/" };
+    auto lines = runAndCapture(cmd, lsExit);
+
+    juce::StringArray folders;
+    for (auto& L : lines)
+    {
+        auto s = L.trim();
+        if (s.endsWithChar('/'))
+        {
+            auto parts = juce::StringArray::fromTokens(s, "/", "");
+            if (parts.size() >= 2)
+            {
+                auto name = parts[parts.size()-2];
+                if (name.startsWithIgnoreCase("sanctsound_"))
+                    folders.addIfNotAlreadyThere(name.toLowerCase());
+            }
+        }
+    }
+    folders.sort(true);
+    return folders;
+}
+
+// Dump *all* audio files for <site> across all deployments to files on disk.
+static void dumpAllAudioForSite(const juce::String& siteLower, const juce::File& dbgDir)
+{
+    int exitCodeFolders = 0;
+    auto folders = gcsListFolders(siteLower, exitCodeFolders);
+
+    // Record folder listing & exit code
+    juce::StringArray meta;
+    meta.add("CMD: gsutil ls gs://noaa-passive-bioacoustic/sanctsound/audio/" + siteLower + "/");
+    meta.add("EXIT: " + juce::String(exitCodeFolders));
+    meta.add("FOLDERS(" + juce::String(folders.size()) + "): " + folders.joinIntoString(", "));
+    writeLines(dbgDir.getChildFile("__folders.txt"), meta);
+
+    juce::StringArray all; // all URLs (every folder)
+    for (auto folder : folders)
+    {
+        const juce::String pattern =
+            "gs://noaa-passive-bioacoustic/sanctsound/audio/" + siteLower + "/" + folder + "/audio/*.flac";
+
+        int exitCode = 0;
+        juce::StringArray cmd { "gsutil", "ls", pattern };
+        auto lines = runAndCapture(cmd, exitCode);
+
+        juce::StringArray urls;
+        for (auto& L : lines)
+        {
+            auto s = L.trim();
+            if (s.startsWith("gs://") && s.endsWithIgnoreCase(".flac"))
+                urls.add(s);
+        }
+
+        writeLines(dbgDir.getChildFile("ALL_" + folder + "_urls.txt"), urls);
+        all.addArray(urls);
+    }
+
+    all.removeEmptyStrings(true);
+    all.removeDuplicates(true);
+    all.sort(true);
+    writeLines(dbgDir.getChildFile("ALL_" + siteLower + "_urls.txt"), all);
+}
+
+// After your selection/filter step, dump those URLs too.
+static void dumpFilteredSelection(const juce::String& setName, const juce::StringArray& selectedUrls, const juce::File& dbgDir)
+{
+    juce::StringArray clean = selectedUrls;
+    clean.removeEmptyStrings(true);
+    clean.removeDuplicates(true);
+    clean.sort(true);
+    writeLines(dbgDir.getChildFile("FILTERED_" + setName + "_urls.txt"), clean);
+}
+
 struct CsvWindow
 {
     juce::Time start;
@@ -2534,6 +2645,12 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         log(msg + "\n");
     }
 
+    const juce::String siteLower = siteCode;
+    const juce::String setName = group.name;
+    const juce::File destRoot = destinationDir;
+    const juce::File dbg = ensureDebugDir(destRoot, "preview_" + setName.replaceCharacter(' ', '_').toLowerCase());
+    dumpAllAudioForSite(siteLower, dbg);
+
     auto bestFiles = chooseBestFiles(group.paths);
     auto downloaded = downloadFilesTo(bestFiles, destinationDir, offlineDataRoot, log);
 
@@ -2730,6 +2847,8 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
                 log("  window " + label + " -> " + row.names + "\n");
         }
     }
+
+    dumpFilteredSelection(setName, urls, dbg);
 
     result.urls = urls;
     result.names = names;
