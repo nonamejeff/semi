@@ -91,8 +91,6 @@ public:
 
     static bool parseEventsFromCsv(const juce::File& csvFile, juce::Array<EventWindow>& out);
 
-    friend struct AudioHourSorter;
-
 private:
     static bool parseTimeUTC(const juce::String& text, juce::Time& out);
     static std::vector<juce::Time> parsePresenceHoursFromCsv(const juce::File& localCsv);
@@ -104,6 +102,11 @@ private:
         juce::Time start;
         juce::Time end;
         juce::String folder;
+    };
+
+    struct AudioHourSorter
+    {
+        int compareElements(const AudioHour& a, const AudioHour& b) const;
     };
 
     juce::StringArray listDeploymentsForSite(const juce::String& site,

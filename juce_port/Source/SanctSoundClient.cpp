@@ -1051,16 +1051,13 @@ static juce::StringArray runAndCollect(const juce::StringArray& cmd, int& exitCo
     return lines;
 }
 
-struct AudioHourSorter
+int SanctSoundClient::AudioHourSorter::compareElements(const AudioHour& a, const AudioHour& b) const
 {
-    int compareElements(const SanctSoundClient::AudioHour& a, const SanctSoundClient::AudioHour& b) const
-    {
-        auto diff = a.start.toMilliseconds() - b.start.toMilliseconds();
-        if (diff < 0) return -1;
-        if (diff > 0) return 1;
-        return a.folder.compareIgnoreCase(b.folder);
-    }
-};
+    auto diff = a.start.toMilliseconds() - b.start.toMilliseconds();
+    if (diff < 0) return -1;
+    if (diff > 0) return 1;
+    return a.folder.compareIgnoreCase(b.folder);
+}
 
 bool SanctSoundClient::parseTimeUTC(const juce::String& text, juce::Time& out)
 {
