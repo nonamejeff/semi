@@ -52,10 +52,27 @@ public:
         juce::Time   startUtc, endUtc; // [start, end) in UTC
     };
 
+    struct PreviewDebugSinks
+    {
+        juce::File folderListings;
+        juce::File folderListingCommands;
+        juce::File candidateUrls;
+        juce::File candidateNames;
+        juce::File selectedUrls;
+        juce::File selectedNames;
+        juce::File explainLog;
+        juce::File windowsTsv;
+    };
+
     SanctSoundClient();
 
     bool setDestinationDirectory(const juce::File& directory);
     juce::File getDestinationDirectory() const;
+
+    void setPreviewDebugDirectory (const juce::File& directory);
+    juce::File getPreviewDebugDirectory() const;
+    void setPreviewDebugSinks (const PreviewDebugSinks& sinks) const;
+    void clearPreviewDebugSinks() const;
 
     juce::StringArray siteLabels() const;
     juce::String codeForLabel(const juce::String& label) const;
@@ -83,6 +100,13 @@ public:
 
     void downloadFiles(const juce::StringArray& urls,
                        const std::function<void(const juce::String&)>& log) const;
+
+    juce::Array<AudioHour> listAudioForFolder(const juce::String& site,
+                                             const juce::String& folder,
+                                             std::optional<juce::Time> tmin,
+                                             std::optional<juce::Time> tmax,
+                                             const std::function<void(const juce::String&)>& log,
+                                             const juce::File& debugDir = {}) const;
 
     ClipSummary clipGroups(const juce::Array<juce::String>& groups,
                            const std::map<juce::String, PreviewCache>& cache,
@@ -134,22 +158,34 @@ private:
         juce::String urls;
     };
 
-    static void minimalFilesForWindows(const juce::Array<AudioHour>& files,
-                                       const std::vector<std::pair<juce::Time, juce::Time>>& windows,
-                                       juce::StringArray& outUrls,
-                                       juce::StringArray& outNames,
-                                       juce::Array<NeededFileRow>& rows,
-                                       int& unmatchedCount,
-                                       const juce::File& debugDir = {});
+    void minimalFilesForWindows(const juce::Array<AudioHour>& files,
+                                const std::vector<std::pair<juce::Time, juce::Time>>& windows,
+                                juce::StringArray& outUrls,
+                                juce::StringArray& outNames,
+                                juce::Array<NeededFileRow>& rows,
+                                int& unmatchedCount,
+                                const juce::File& debugDir = {}) const;
 
     juce::File makePreviewDebugDir (const juce::File& destDir, const juce::String& setName) const;
     juce::StringArray rowsToUrls (const juce::Array<AudioHour>& rows) const;
     static void dumpLines (const juce::File& outFile, const juce::StringArray& lines);
 
+    const PreviewDebugSinks* getPreviewDebugSinks() const;
+    void logPreviewExplain (const juce::String& message) const;
+    void writeListingDebug (const juce::String& folder,
+                            const juce::String& pattern,
+                            const juce::StringArray& lines,
+                            int exitCode) const;
+    void writeCandidateDebug (const juce::Array<AudioHour>& rows) const;
+    void writeSelectedDebug (const juce::StringArray& urls) const;
+    void writeWindowsDebug (const std::vector<std::pair<juce::Time, juce::Time>>& windows) const;
+
     static int runAndStream(const juce::StringArray& args,
                             const std::function<void(const juce::String&)>& log);
 
     juce::File destinationDir;
+
+    juce::File previewDebugOverrideDir;
 
     juce::String gcsBucket;
     juce::String audioPrefix;
@@ -162,6 +198,8 @@ private:
 
     juce::File offlineDataRoot;
     bool offlineEnabled = false;
+
+    mutable std::optional<PreviewDebugSinks> previewDebugSinks;
 };
 
 } // namespace sanctsound
