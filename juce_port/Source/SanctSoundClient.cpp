@@ -24,6 +24,41 @@
 #include <vector>
 #include <optional>
 
+static juce::File ss_makeDebugDir (const juce::File& destDir, const juce::String& setName)
+{
+    auto dbgRoot = destDir.getChildFile("__audio_debug");
+    dbgRoot.createDirectory();
+    auto dbg = dbgRoot.getChildFile("preview_" + setName);
+    dbg.createDirectory();
+
+    auto marker = dbgRoot.getChildFile("LAST_DEBUG_DIR.txt");
+    marker.replaceWithText(dbg.getFullPathName());
+
+    return dbg;
+}
+
+static void ss_dumpLines (const juce::File& outFile, const juce::StringArray& lines)
+{
+    juce::String joined;
+    for (auto& s : lines)
+        joined << s << "\n";
+    outFile.replaceWithText(joined);
+}
+
+static juce::StringArray ss_rowsToUrls (const juce::Array<sanctsound::SanctSoundClient::AudioHour>& rows)
+{
+    juce::StringArray a;
+    for (auto const& r : rows)
+        a.add(r.url.toString(false));
+    return a;
+}
+
+static juce::StringArray ss_stringsToArray (const juce::StringArray& strings)
+{
+    juce::StringArray a(strings);
+    return a;
+}
+
 namespace
 {
 
@@ -148,14 +183,6 @@ static bool hasAudioExt(const juce::String& name)
 static juce::String normKey(const juce::String& name)
 {
     return name.toLowerCase().removeCharacters("\r\n");
-}
-
-// ---------- AUDIO DEBUG DUMPS (no logic changes; just logging) ----------
-static juce::File ensureDebugDir(const juce::File& root, const juce::String& tag)
-{
-    auto d = root.getChildFile("__audio_debug").getChildFile(tag);
-    d.createDirectory();
-    return d;
 }
 
 static void writeLines(const juce::File& f, const juce::StringArray& lines)
@@ -2647,8 +2674,7 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
 
     const juce::String siteLower = siteCode;
     const juce::String setName = group.name;
-    const juce::File destRoot = destinationDir;
-    const juce::File dbg = ensureDebugDir(destRoot, "preview_" + setName.replaceCharacter(' ', '_').toLowerCase());
+    const juce::File dbg = ss_makeDebugDir(destinationDir, setName);
     dumpAllAudioForSite(siteLower, dbg);
 
     auto bestFiles = chooseBestFiles(group.paths);
@@ -2847,6 +2873,19 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
                 log("  window " + label + " -> " + row.names + "\n");
         }
     }
+
+    ss_dumpLines(dbg.getChildFile("ALL_candidates_urls.txt"),
+                 ss_rowsToUrls(audioRows));
+
+    ss_dumpLines(dbg.getChildFile("FILTERED_" + setName + "_urls.txt"),
+                 ss_stringsToArray(urls));
+
+    juce::StringArray filteredNames;
+    for (auto const& u : urls)
+        filteredNames.add(juce::URL(u).getFileName());
+    ss_dumpLines(dbg.getChildFile("FILTERED_" + setName + "_basenames.txt"), filteredNames);
+
+    DBG("SanctSound: debug written to: " + dbg.getFullPathName());
 
     dumpFilteredSelection(setName, urls, dbg);
 
