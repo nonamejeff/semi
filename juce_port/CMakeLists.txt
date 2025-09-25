@@ -4,13 +4,13 @@ project(SanctSoundJuce VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(SANCTSOUND_BUILD_GUI "Build the JUCE GUI app" OFF)
-option(SANCTSOUND_BUILD_CLI "Build the headless CLI app" ON)
+option(SANCTSOUND_BUILD_APP "Build JUCE GUI app" ON)
+option(SANCTSOUND_BUILD_CLI "Build headless CLI" ON)
 
 # JUCE vendored
 set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(JUCE_BUILD_EXTRAS   OFF CACHE BOOL "" FORCE)
-if (SANCTSOUND_BUILD_CLI AND NOT SANCTSOUND_BUILD_GUI)
+if (SANCTSOUND_BUILD_CLI AND NOT SANCTSOUND_BUILD_APP)
     set(JUCE_MODULES_ONLY ON CACHE BOOL "" FORCE)
 else()
     set(JUCE_MODULES_ONLY OFF CACHE BOOL "" FORCE)
@@ -24,25 +24,29 @@ set(SANCTSOUND_CORE_SOURCES
     Source/PreviewModels.cpp
 )
 
+add_library(sanctsound_core STATIC ${SANCTSOUND_CORE_SOURCES})
+target_include_directories(sanctsound_core PUBLIC Source)
+target_compile_definitions(sanctsound_core PUBLIC
+    JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+    JUCE_DISABLE_JUCE_VERSION_PRINTING=1
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0
+)
+target_link_libraries(sanctsound_core PUBLIC
+    juce::juce_core
+    juce::juce_data_structures
+    juce::juce_audio_basics
+    juce::juce_audio_formats
+)
+
 if (SANCTSOUND_BUILD_CLI)
     add_executable(sanctsound_cli
-        ${SANCTSOUND_CORE_SOURCES}
-        Source/cli_main.cpp
+        cli/sanctsound_cli.cpp
     )
-    target_include_directories(sanctsound_cli PRIVATE Source)
-    target_compile_definitions(sanctsound_cli PRIVATE
-        JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
-        JUCE_DISABLE_JUCE_VERSION_PRINTING=1
-        JUCE_USE_CURL=0
-        JUCE_WEB_BROWSER=0
-    )
-    target_link_libraries(sanctsound_cli PRIVATE
-        juce::juce_core
-        juce::juce_data_structures
-    )
+    target_link_libraries(sanctsound_cli PRIVATE sanctsound_core)
 endif()
 
-if (SANCTSOUND_BUILD_GUI)
+if (SANCTSOUND_BUILD_APP)
     # ---- Full GUI app for macOS/local ----
     juce_add_gui_app(SanctSoundJuceApp
         PRODUCT_NAME "SanctSound JUCE"
@@ -57,7 +61,6 @@ if (SANCTSOUND_BUILD_GUI)
         Source/MainComponent.h
         Source/MetadataView.cpp
         Source/MetadataView.h
-        ${SANCTSOUND_CORE_SOURCES}
         Source/PreviewModels.h
         Source/SanctSoundClient.h
         Source/Utilities.h
@@ -74,6 +77,7 @@ if (SANCTSOUND_BUILD_GUI)
     )
 
     target_link_libraries(SanctSoundJuceApp PRIVATE
+        sanctsound_core
         juce::juce_core
         juce::juce_data_structures
         juce::juce_events

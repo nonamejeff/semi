@@ -36,7 +36,25 @@ static std::time_t ss_timegm (std::tm* tm)
 
 juce::String sanctsound::SanctSoundClient::toIsoUTC (const juce::Time& t)
 {
-    return t.toISO8601 (true /*includeSeparatorT*/, true /*includeMilliseconds*/);
+    const auto millis = t.toMilliseconds();
+    const std::time_t seconds = static_cast<std::time_t> (millis / 1000);
+
+    std::tm tm{};
+#if JUCE_WINDOWS
+    gmtime_s (&tm, &seconds);
+#else
+    gmtime_r (&seconds, &tm);
+#endif
+
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02dZ",
+                  tm.tm_year + 1900,
+                  tm.tm_mon + 1,
+                  tm.tm_mday,
+                  tm.tm_hour,
+                  tm.tm_min,
+                  tm.tm_sec);
+    return juce::String(buffer);
 }
 
 bool sanctsound::SanctSoundClient::parseAudioStartFromName (const juce::String& fileName, juce::Time& outUtc)
@@ -721,6 +739,33 @@ static void ensureParentDir(const juce::File& f)
 
 static void writeLines(const juce::File& f, const juce::StringArray& lines)
 {
+    ensureParentDir(f);
+    juce::FileOutputStream os(f);
+    if (! os.openedOk())
+        return;
+    for (auto& s : lines)
+        os.writeText(s + "\n", false, false, "\n");
+    os.flush();
+}
+
+static void appendLine(const juce::File& f, const juce::String& line)
+{
+    if (f.getFullPathName().isEmpty())
+        return;
+
+    ensureParentDir(f);
+    juce::FileOutputStream os(f, true);
+    if (! os.openedOk())
+        return;
+    os.writeText(line + "\n", false, false, "\n");
+    os.flush();
+}
+
+static void overwriteLines(const juce::File& f, const juce::StringArray& lines)
+{
+    if (f.getFullPathName().isEmpty())
+        return;
+
     ensureParentDir(f);
     juce::FileOutputStream os(f);
     if (! os.openedOk())
@@ -1512,7 +1557,7 @@ void SanctSoundClient::minimalFilesForWindows(const juce::Array<AudioHour>& file
                                              juce::StringArray& outNames,
                                              juce::Array<NeededFileRow>& rows,
                                              int& unmatchedCount,
-                                             const juce::File& debugDir)
+                                             const juce::File& debugDir) const
 {
     outUrls.clear();
     outNames.clear();
@@ -1554,6 +1599,9 @@ void SanctSoundClient::minimalFilesForWindows(const juce::Array<AudioHour>& file
         const AudioHour* first = idxs.size() >= 1 ? &files.getReference(idxs[0]) : nullptr;
         const AudioHour* second = needTwo ? &files.getReference(idxs[1]) : nullptr;
 
+        juce::String windowLabel = toIsoUTC (window.first) + " .. " + toIsoUTC (window.second);
+        logPreviewExplain("window " + windowLabel);
+
         if (debugDir.getFullPathName().isNotEmpty())
         {
             juce::File m = debugDir.getChildFile ("MATCH_log.txt");
@@ -1572,9 +1620,24 @@ void SanctSoundClient::minimalFilesForWindows(const juce::Array<AudioHour>& file
 
         if (idxs.isEmpty())
         {
+            logPreviewExplain("  -> no audio match");
             rows.add({ window.first, window.second, {}, {} });
             ++unmatchedCount;
             continue;
+        }
+
+        if (first != nullptr)
+        {
+            logPreviewExplain("  keep " + first->fname
+                               + " [" + toIsoUTC(first->startUtc) + " .. " + toIsoUTC(first->endUtc) + "]");
+        }
+        if (needTwo)
+        {
+            if (second != nullptr)
+                logPreviewExplain("  keep " + second->fname
+                                   + " [" + toIsoUTC(second->startUtc) + " .. " + toIsoUTC(second->endUtc) + "]");
+            else
+                logPreviewExplain("  second file missing for coverage");
         }
 
         juce::StringArray namesThis;
@@ -1697,6 +1760,8 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioInFolder(con
     if (siteCode.isEmpty() || folderName.isEmpty())
         return out;
 
+    logPreviewExplain("list-audio folder=" + siteCode + "/" + folderName);
+
     juce::String prefix = audioPrefix;
     if (! prefix.endsWithChar('/'))
         prefix << "/";
@@ -1704,6 +1769,12 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioInFolder(con
     juce::StringArray lines;
     juce::String pattern;
     int exitCode = 0;
+
+    auto logOffline = [&]()
+    {
+        if (offlineEnabled)
+            logPreviewExplain("offline listing used for " + folderName + " entries=" + juce::String(lines.size()));
+    };
 
     if (offlineEnabled)
     {
@@ -1756,12 +1827,16 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioInFolder(con
                 log("[offline] audio index " + offlineFile.getFullPathName()
                     + " entries=" + juce::String(lines.size()) + "\n");
         }
+
+        logOffline();
     }
     else
     {
         pattern = "gs://" + gcsBucket + "/" + prefix + siteCode + "/" + folderName + "/audio/*.flac";
         lines = runAndCollect({ "gsutil", "ls", "-r", pattern }, exitCode);
     }
+
+    writeListingDebug(folderName, pattern, lines, exitCode);
 
     std::optional<AudioHour> left;
     int parsed = 0;
@@ -1780,6 +1855,7 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioInFolder(con
         juce::Time startUtc;
         if (! parseAudioStartFromName(fname, startUtc))
         {
+            logPreviewExplain("skip parse failure: " + fname);
             if (debugDir.getFullPathName().isNotEmpty())
             {
                 juce::File pf = debugDir.getChildFile("parse_failures.txt");
@@ -1792,15 +1868,26 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioInFolder(con
 
         if (tmin.has_value() && timeLessThan(startUtc, *tmin))
         {
+            juce::String note = "drop before window: " + fname
+                                 + " start=" + toIsoUTC(startUtc)
+                                 + " < tmin=" + toIsoUTC(*tmin);
+            logPreviewExplain(note);
             if (! left.has_value() || timeLessThan(left->startUtc, startUtc))
                 left = AudioHour { url, fname, folderName, startUtc, startUtc + juce::RelativeTime::hours(1) };
             continue;
         }
 
         if (tmax.has_value() && timeLessThan(*tmax, startUtc))
+        {
+            logPreviewExplain("drop after window: " + fname
+                               + " start=" + toIsoUTC(startUtc)
+                               + " > tmax=" + toIsoUTC(*tmax));
             continue;
+        }
 
         out.add({ url, fname, folderName, startUtc, startUtc + juce::RelativeTime::hours(1) });
+        logPreviewExplain("candidate in-range: " + fname
+                           + " start=" + toIsoUTC(startUtc));
     }
 
     if (left.has_value())
@@ -1816,6 +1903,21 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioInFolder(con
             out.add(*left);
             if (log)
                 log("include left-boundary: " + left->fname + "\n");
+
+            juce::String diffText;
+            if (tmin.has_value())
+            {
+                auto diffMs = tmin->toMilliseconds() - left->startUtc.toMilliseconds();
+                diffText = " diff_secs=" + juce::String(diffMs / 1000.0, 3);
+            }
+            logPreviewExplain("left-boundary add: " + left->fname
+                               + " start=" + toIsoUTC(left->startUtc) + diffText);
+        }
+        else if (tmin.has_value())
+        {
+            auto diffMs = tmin->toMilliseconds() - left->startUtc.toMilliseconds();
+            logPreviewExplain("left-boundary skipped: " + left->fname
+                               + " diff_secs=" + juce::String(diffMs / 1000.0, 3));
         }
     }
 
@@ -1908,6 +2010,8 @@ juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioAcross(const
 
     if (ordered.isEmpty() && log)
         log("[WARN] No deployments found for site " + site + "\n");
+    if (! ordered.isEmpty())
+        logPreviewExplain("folder order: " + ordered.joinIntoString(", "));
 
     for (auto& folderName : ordered)
     {
@@ -2281,6 +2385,141 @@ SanctSoundClient::SanctSoundClient()
     auto offlineEnv = juce::SystemStats::getEnvironmentVariable("SANCTSOUND_OFFLINE_ROOT", {});
     if (offlineEnv.isNotEmpty())
         setOfflineDataRoot(juce::File(offlineEnv));
+}
+
+void SanctSoundClient::setPreviewDebugDirectory(const juce::File& directory)
+{
+    previewDebugOverrideDir = directory;
+    if (previewDebugOverrideDir.getFullPathName().isNotEmpty())
+        previewDebugOverrideDir.createDirectory();
+}
+
+juce::File SanctSoundClient::getPreviewDebugDirectory() const
+{
+    return previewDebugOverrideDir;
+}
+
+void SanctSoundClient::setPreviewDebugSinks (const PreviewDebugSinks& sinks) const
+{
+    previewDebugSinks = sinks;
+
+    auto resetFile = [] (const juce::File& file)
+    {
+        if (file.getFullPathName().isEmpty())
+            return;
+        ensureParentDir(file);
+        if (file.existsAsFile())
+            file.deleteFile();
+    };
+
+    resetFile(sinks.folderListings);
+    resetFile(sinks.folderListingCommands);
+    resetFile(sinks.candidateUrls);
+    resetFile(sinks.candidateNames);
+    resetFile(sinks.selectedUrls);
+    resetFile(sinks.selectedNames);
+    resetFile(sinks.explainLog);
+    resetFile(sinks.windowsTsv);
+}
+
+void SanctSoundClient::clearPreviewDebugSinks() const
+{
+    previewDebugSinks.reset();
+}
+
+const SanctSoundClient::PreviewDebugSinks* SanctSoundClient::getPreviewDebugSinks() const
+{
+    return previewDebugSinks ? &previewDebugSinks.value() : nullptr;
+}
+
+void SanctSoundClient::logPreviewExplain (const juce::String& message) const
+{
+    if (message.isEmpty())
+        return;
+
+    if (const auto* sinks = getPreviewDebugSinks())
+        appendLine(sinks->explainLog, message);
+}
+
+void SanctSoundClient::writeListingDebug (const juce::String& folder,
+                                          const juce::String& pattern,
+                                          const juce::StringArray& lines,
+                                          int exitCode) const
+{
+    const auto* sinks = getPreviewDebugSinks();
+    if (sinks == nullptr)
+        return;
+
+    juce::String header = "## folder=" + folder;
+    if (pattern.isNotEmpty())
+        header += " pattern=" + pattern;
+    header += " exit=" + juce::String(exitCode);
+    appendLine(sinks->folderListings, header);
+    for (auto& line : lines)
+        appendLine(sinks->folderListings, line);
+    appendLine(sinks->folderListings, juce::String());
+
+    if (sinks->folderListingCommands.getFullPathName().isNotEmpty())
+    {
+        juce::StringArray cmd { "gsutil", "ls", "-r", pattern }; // matches call site
+        if (pattern.isEmpty())
+            cmd.removeRange(3, 1);
+        appendLine(sinks->folderListingCommands,
+                   formatCommand(cmd) + " | exit=" + juce::String(exitCode));
+    }
+}
+
+void SanctSoundClient::writeCandidateDebug (const juce::Array<AudioHour>& rows) const
+{
+    const auto* sinks = getPreviewDebugSinks();
+    if (sinks == nullptr)
+        return;
+
+    juce::StringArray urls;
+    juce::StringArray names;
+    for (auto const& row : rows)
+    {
+        urls.add(row.url);
+        names.add(row.fname);
+    }
+    overwriteLines(sinks->candidateUrls, urls);
+    overwriteLines(sinks->candidateNames, names);
+}
+
+void SanctSoundClient::writeSelectedDebug (const juce::StringArray& urls) const
+{
+    const auto* sinks = getPreviewDebugSinks();
+    if (sinks == nullptr)
+        return;
+
+    juce::StringArray names;
+    for (auto const& url : urls)
+        names.add(juce::URL(url).getFileName());
+
+    overwriteLines(sinks->selectedUrls, urls);
+    overwriteLines(sinks->selectedNames, names);
+}
+
+void SanctSoundClient::writeWindowsDebug (const std::vector<std::pair<juce::Time, juce::Time>>& windows) const
+{
+    const auto* sinks = getPreviewDebugSinks();
+    if (sinks == nullptr)
+        return;
+
+    juce::StringArray lines;
+    for (const auto& window : windows)
+        lines.add(toIsoUTC(window.first) + "\t" + toIsoUTC(window.second));
+    overwriteLines(sinks->windowsTsv, lines);
+}
+
+juce::Array<SanctSoundClient::AudioHour> SanctSoundClient::listAudioForFolder(const juce::String& site,
+                                                                             const juce::String& folder,
+                                                                             std::optional<juce::Time> tmin,
+                                                                             std::optional<juce::Time> tmax,
+                                                                             const std::function<void(const juce::String&)>& log,
+                                                                             const juce::File& debugDir) const
+{
+    return listAudioInFolder(site, folder, tmin, tmax, log, debugDir);
 }
 
 void SanctSoundClient::setOfflineDataRoot(const juce::File& directory)
@@ -2726,9 +2965,18 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         log(msg + "\n");
     }
 
+    if (preferredFolder.isNotEmpty())
+        logPreviewExplain("resolved folder=" + preferredFolder);
+    else
+        logPreviewExplain("resolved folder=<none>");
+
     const juce::String siteLower = siteCode;
     const juce::String setName = group.name;
-    const juce::File dbg = makePreviewDebugDir(destinationDir, setName);
+    juce::File dbg = previewDebugOverrideDir;
+    if (dbg.getFullPathName().isEmpty())
+        dbg = makePreviewDebugDir(destinationDir, setName);
+    else
+        dbg.createDirectory();
     dumpAllAudioForSite(siteLower, dbg);
 
     auto bestFiles = chooseBestFiles(group.paths);
@@ -2883,6 +3131,8 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
             + " | tmin=" + tminText + " | tmax=" + tmaxText + "\n");
     }
 
+    writeWindowsDebug(windows);
+
     if (windows.empty() && log)
     {
         log("[WARN] No windows parsed from CSV artifacts.\n");
@@ -2903,6 +3153,8 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         audioRows = listAudioAcross(siteCode, preferredFolder, tmin, tmax, log, dbg);
     if (log)
         log("Audio rows collected: " + juce::String(audioRows.size()) + "\n");
+
+    writeCandidateDebug(audioRows);
 
     {
         juce::File dbgFile = dbg.getChildFile("PARSE_" + setName + ".txt");
@@ -2930,6 +3182,8 @@ PreviewResult SanctSoundClient::previewGroup(const juce::String& site,
         }
     }
     minimalFilesForWindows(audioRows, windows, urls, names, neededRows, unmatched, dbg);
+
+    writeSelectedDebug(urls);
 
     if (log)
     {
