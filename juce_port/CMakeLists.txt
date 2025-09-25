@@ -4,54 +4,45 @@ project(SanctSoundJuce VERSION 0.1.0 LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(SANCTSOUND_HEADLESS "Build without JUCE GUI (for CI/Codex Linux)" OFF)
+option(SANCTSOUND_BUILD_GUI "Build the JUCE GUI app" OFF)
+option(SANCTSOUND_BUILD_CLI "Build the headless CLI app" ON)
 
 # JUCE vendored
 set(JUCE_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(JUCE_BUILD_EXTRAS   OFF CACHE BOOL "" FORCE)
-if (SANCTSOUND_HEADLESS)
-    # Avoid building juceaide (and GUI/X11 dependencies) when we only need
-    # the JUCE modules for the command-line target.
+if (SANCTSOUND_BUILD_CLI AND NOT SANCTSOUND_BUILD_GUI)
     set(JUCE_MODULES_ONLY ON CACHE BOOL "" FORCE)
+else()
+    set(JUCE_MODULES_ONLY OFF CACHE BOOL "" FORCE)
 endif()
 add_subdirectory(external/JUCE)
 
-# Headless / CLI build switch (safe in containers)
-option(SANCTSOUND_BUILD_CLI "Build a headless CLI target for container tests" ON)
-if (SANCTSOUND_BUILD_CLI)
-  add_subdirectory(cli)
-endif()
-
-# Common sources (non-GUI)
-set(SANCT_CORE_SOURCES
+# Core library sources that do NOT require GUI modules
+set(SANCTSOUND_CORE_SOURCES
     Source/SanctSoundClient.cpp
     Source/Utilities.cpp
     Source/PreviewModels.cpp
 )
 
-if (SANCTSOUND_HEADLESS)
-    # ---- Headless CLI target for CI/Codex (no X11 needed) ----
-    add_executable(SanctSoundCli
-        ${SANCT_CORE_SOURCES}
+if (SANCTSOUND_BUILD_CLI)
+    add_executable(sanctsound_cli
+        ${SANCTSOUND_CORE_SOURCES}
         Source/cli_main.cpp
     )
-    target_include_directories(SanctSoundCli PRIVATE Source)
-    target_link_libraries(SanctSoundCli PRIVATE
+    target_include_directories(sanctsound_cli PRIVATE Source)
+    target_compile_definitions(sanctsound_cli PRIVATE
+        JUCE_GLOBAL_MODULE_SETTINGS_INCLUDED=1
+        JUCE_DISABLE_JUCE_VERSION_PRINTING=1
+        JUCE_USE_CURL=0
+        JUCE_WEB_BROWSER=0
+    )
+    target_link_libraries(sanctsound_cli PRIVATE
         juce::juce_core
         juce::juce_data_structures
-        juce::juce_audio_basics
-        juce::juce_audio_formats
     )
-    find_package(CURL REQUIRED)
-    target_link_libraries(SanctSoundCli PRIVATE CURL::libcurl)
-    set_target_properties(SanctSoundCli PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_BINARY_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_BINARY_DIR}"
-    )
-else()
+endif()
+
+if (SANCTSOUND_BUILD_GUI)
     # ---- Full GUI app for macOS/local ----
     juce_add_gui_app(SanctSoundJuceApp
         PRODUCT_NAME "SanctSound JUCE"
@@ -66,7 +57,7 @@ else()
         Source/MainComponent.h
         Source/MetadataView.cpp
         Source/MetadataView.h
-        ${SANCT_CORE_SOURCES}
+        ${SANCTSOUND_CORE_SOURCES}
         Source/PreviewModels.h
         Source/SanctSoundClient.h
         Source/Utilities.h
