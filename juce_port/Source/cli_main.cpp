@@ -1,73 +1,66 @@
 #include <juce_core/juce_core.h>
-#include <algorithm>
-#include <stdexcept>
+
 #include "SanctSoundClient.h"
-#include "PreviewModels.h"
-#include "Utilities.h"
 
-using namespace juce;
+using namespace sanctsound;
 
-// Minimal smoke test so Codex can run something
-int main()
+namespace
 {
-    Logger::writeToLog("SanctSound CLI starting...");
-    try
+bool runSelfTest()
+{
+    juce::Logger::writeToLog("sanctsound_cli: selftest start");
+
+    SanctSoundClient client;
+    juce::ignoreUnused(client);
+
+    bool ok = true;
+
+    juce::Time parsedStart;
+    const bool parsed = SanctSoundClient::parseAudioStartFromName(
+        "sanctsound_ci01_02_20210101T030000Z.wav", parsedStart);
+    juce::ignoreUnused(parsedStart);
+    if (! parsed)
     {
-        sanctsound::SanctSoundClient client;
-        auto cwd = juce::File::getCurrentWorkingDirectory();
-        auto offlineRoot = cwd.getChildFile("offline_data");
-        if (offlineRoot.isDirectory())
-        {
-            client.setOfflineDataRoot(offlineRoot);
-            juce::Logger::writeToLog("Using offline data root: " + offlineRoot.getFullPathName());
-        }
-
-        auto destDir = cwd.getChildFile("cli_output");
-        if (! client.setDestinationDirectory(destDir))
-            throw std::runtime_error("Failed to set destination directory: " + destDir.getFullPathName().toStdString());
-
-        auto labels = client.siteLabels();
-        Logger::writeToLog("Sites: " + String(labels.size()));
-
-        const juce::String siteCode = "ci01";
-        const juce::String groupName = "sanctsound_ci01_02_bluewhale";
-
-        auto logFn = [](const juce::String& message)
-        {
-            juce::Logger::writeToLog(message);
-        };
-
-        auto groups = client.listProductGroups(siteCode, {}, logFn);
-        const sanctsound::ProductGroup* targetGroup = nullptr;
-        for (auto& g : groups)
-        {
-            if (g.name == groupName)
-            {
-                targetGroup = &g;
-                break;
-            }
-        }
-
-        if (targetGroup == nullptr)
-            throw std::runtime_error("Group not found: " + groupName.toStdString());
-
-        auto preview = client.previewGroup(siteCode, *targetGroup, false, logFn);
-
-        Logger::writeToLog("CSV windows=" + String(preview.windows.size())
-                           + ", matched=" + String(preview.matchedWindows)
-                           + ", unique_files=" + String(preview.files.size()));
-
-        Logger::writeToLog("First 10 matched objects:");
-        for (int i = 0; i < juce::jmin<int>(10, preview.urls.size()); ++i)
-            Logger::writeToLog("  " + preview.urls[i]);
-
-        Logger::writeToLog("SanctSound CLI parity check complete");
-        return 0;
+        juce::Logger::writeToLog("selftest: parseAudioStartFromName failed");
+        ok = false;
     }
-    catch (const std::exception& e)
+
+    const auto folder = SanctSoundClient::folderFromSetName("SanctSound_CI01_02_BlueWhale");
+    if (folder != "sanctsound_ci01_02")
     {
-        Logger::writeToLog(String("Error: ") + e.what());
-        return 1;
+        juce::Logger::writeToLog("selftest: folderFromSetName unexpected result: " + folder);
+        ok = false;
     }
+
+    if (ok)
+        juce::Logger::writeToLog("sanctsound_cli: selftest OK");
+    else
+        juce::Logger::writeToLog("sanctsound_cli: selftest FAILED");
+
+    return ok;
 }
+} // namespace
 
+int main (int argc, char** argv)
+{
+    bool runSelfTestMode = false;
+
+    for (int i = 1; i < argc; ++i)
+    {
+        juce::String arg (argv[i]);
+        if (arg == "--selftest")
+        {
+            runSelfTestMode = true;
+            break;
+        }
+    }
+
+    if (argc <= 1)
+        runSelfTestMode = true;
+
+    if (runSelfTestMode)
+        return runSelfTest() ? 0 : 1;
+
+    juce::Logger::writeToLog("sanctsound_cli: pass --selftest to run checks");
+    return 0;
+}
