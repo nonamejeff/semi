@@ -1,0 +1,10 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/kailashpermaul/Documents/GitHub/semi/build-cli/cmake_install.cmake",
+		"/Users/kailashpermaul/Documents/GitHub/semi/build-cli/juce_port/cmake_install.cmake",
+		"/Users/kailashpermaul/Documents/GitHub/semi/build-cli/juce_port/external/JUCE/cmake_install.cmake",
+		"/Users/kailashpermaul/Documents/GitHub/semi/build-cli/juce_port/external/JUCE/modules/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
